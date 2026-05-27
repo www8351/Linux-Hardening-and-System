@@ -11,6 +11,7 @@ No more `os.system('... {} ...'.format(user_input))`.
 ![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)
 ![mypy](https://img.shields.io/badge/types-mypy%20strict-2A6DB2)
 ![pytest](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
 </div>
 
