@@ -1,4 +1,6 @@
-"""Privileged ops — subprocess + tool lookup fully mocked (nothing real runs)."""
+"""Tests for ossys.system. Proves the security contract: usernames are validated, commands
+are issued as shell-free argument lists, and injection attempts are rejected. subprocess and
+tool lookup are fully mocked, so no real system user is ever created."""
 
 from __future__ import annotations
 

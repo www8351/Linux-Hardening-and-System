@@ -1,4 +1,5 @@
-"""Pure task logic."""
+"""Tests for ossys.tasks. Proves the pure, shell-free task logic: input bounds are enforced,
+dice rolls are reproducible under a seeded RNG, and archives only include existing files."""
 
 from __future__ import annotations
 
