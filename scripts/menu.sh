@@ -1,11 +1,27 @@
 #!/usr/bin/env bash
 #
-# Thin bash wrapper around the `ossys` CLI — the modern replacement for the old
-# interactive menu_bash.sh. Bash still drives, but the logic lives in tested Python.
+# Script:   scripts/menu.sh
+#
+# Purpose:  Thin Bash wrapper around the `ossys` CLI — the modern, non-interactive
+#           replacement for the old `while true` menu_bash.sh prompt loop. Bash still
+#           drives, but all logic lives in tested, validated Python.
+#
+# Usage:    ./scripts/menu.sh <command> [args...]
+#           ./scripts/menu.sh count 200
+#           ./scripts/menu.sh cubes 7 --seed 42
+#           ./scripts/menu.sh details --name Refael --age 30 --phone 555
+#
+# Notes:    `set -euo pipefail` makes the wrapper fail fast and loudly:
+#             -e  exit on any command error
+#             -u  error on use of an unset variable
+#             -o pipefail  surface failures anywhere in a pipeline
+#           Arguments are forwarded verbatim via "$@" (array-quoted), so they are never
+#           re-split or re-evaluated by the shell.
 #
 set -euo pipefail
 
-# Run ossys via uv if available, else assume it is on PATH.
+# Prefer running through `uv` (reproducible, project-pinned env); otherwise fall back to a
+# globally installed `ossys` on PATH.
 if command -v uv >/dev/null 2>&1; then
 	OSSYS=(uv run ossys)
 else
