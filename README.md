@@ -81,3 +81,10 @@ CI runs lint + format + mypy + tests + `shellcheck` on the wrapper on every push
 User input never reaches a shell. `add_user` validates the username against a strict
 pattern and passes argument **lists** to `subprocess`, so `"bob; rm -rf /"` is rejected,
 not executed.
+
+---
+
+## 🏷 Topics
+
+`python` · `cli` · `typer` · `subprocess` · `security` · `shell-injection` · `rich` ·
+`uv` · `mypy` · `ruff` · `pytest` · `devtools` · `sysadmin` · `cross-platform`
