@@ -1,7 +1,20 @@
-"""Non-interactive Typer CLI exposing the system tasks.
+"""Module:   ossys.cli
 
-Replaces the old `while "True"` input() menus (menu_python.py / menu_bash.sh).
-Everything is driven by arguments, so it runs in scripts and CI.
+Purpose:  Non-interactive command-line entrypoint (Typer) exposing the validated task and
+          system functions. Registered as the ``ossys`` console script.
+
+Usage:    ossys count 200
+          ossys cubes 7 --seed 42
+          ossys archive a.log b.log -o backup.tgz
+          ossys useradd alice --sudo          # Linux only
+
+Security notes:
+    * This module is a thin, declarative layer: every command delegates to a function in
+      ``ossys.tasks`` / ``ossys.system`` that already validates its inputs. The CLI adds no
+      shell-outs of its own.
+    * Replacing the old ``while "True": input()`` menus with argument-driven commands makes
+      the tool scriptable, automatable and CI-safe (no blocking prompts), and removes the
+      interactive-input attack surface.
 """
 
 from __future__ import annotations
@@ -67,6 +80,8 @@ def useradd(
     sudo: Annotated[bool, typer.Option("--sudo", help="Add to the sudo group")] = False,
 ) -> None:
     """Create a system user (Linux only)."""
+    # Delegates to ossys.system.add_user, which validates the username and runs shell-free
+    # subprocess calls. This command typically requires root/sudo privileges.
     _add_user(username, sudo_group=sudo)
     typer.echo(f"Created user {username}")
 
