@@ -3,17 +3,53 @@
 # 🛠 ossys
 
 **Small system tasks as safe, testable Python — with a non-interactive CLI.**
+*משימות מערכת קטנות כפייתון בטוח ובר-בדיקה — עם CLI לא-אינטראקטיבי.*
 
 No more `os.system('... {} ...'.format(user_input))`.
 
+[![CI](https://github.com/www8351/Linux-Hardening-and-System/actions/workflows/ci.yml/badge.svg)](https://github.com/www8351/Linux-Hardening-and-System/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![uv](https://img.shields.io/badge/packaged%20with-uv-DE5FE9?logo=astral&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)
 ![mypy](https://img.shields.io/badge/types-mypy%20strict-2A6DB2)
 ![pytest](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
+![Last commit](https://img.shields.io/github/last-commit/www8351/Linux-Hardening-and-System?color=informational)
 
 </div>
+
+---
+
+## 🌍 What is this? · מה זה?
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🇬🇧 English
+
+**ossys** turns a set of common Linux admin tasks — user management, file writes,
+archiving, dice/counting utilities — into **pure, testable Python** behind a
+non-interactive Typer CLI. It replaces unsafe `os.system(...format())` string-building
+with `subprocess` list-args and strict input validation, so user input **never reaches a shell**.
+
+</td>
+<td width="50%" valign="top">
+
+<div dir="rtl">
+
+### 🇮🇱 עברית
+
+**ossys** הופך אוסף משימות ניהול נפוצות בלינוקס — ניהול משתמשים, כתיבת קבצים, ארכוב,
+כלי ספירה/קוביות — ל**פייתון טהור ובר-בדיקה** מאחורי CLI לא-אינטראקטיבי מבוסס Typer.
+הוא מחליף בניית-מחרוזות מסוכנת של `os.system(...format())` בארגומנטים-כרשימה ל-`subprocess`
+ובוולידציית קלט קפדנית, כך שקלט המשתמש **לעולם לא מגיע ל-shell**.
+
+</div>
+
+</td>
+</tr>
+</table>
 
 ---
 
