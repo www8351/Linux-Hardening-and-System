@@ -43,6 +43,7 @@ import typer
 from . import __version__
 from .config import Settings, load_settings
 from .exits import AlreadyDone, Exit, OssysError
+from .notify import WebhookResult, notify_failure
 from .output import Emitter
 from .preflight import config_search_path, run_checks, summarise
 from .privilege import PrivilegeReport, detect_mode
@@ -74,6 +75,14 @@ class Runtime:
         if self._privilege is None:
             self._privilege = detect_mode(self.settings.mode)
         return self._privilege
+
+
+# The active runtime, published so `main()` can reach the resolved Settings from its
+# exception handlers. Typer owns the Context, and by the time an exception reaches the
+# boundary the Context is gone -- but the webhook needs to know where to POST. Set once by
+# the callback; None means config never loaded, in which case no notification is attempted
+# (a config we could not parse is not a config we should trust a URL from).
+_ACTIVE_RUNTIME: Runtime | None = None
 
 
 def _runtime(ctx: typer.Context) -> Runtime:
@@ -121,7 +130,8 @@ def main_callback(
     settings.json_output = settings.json_output or json_out
     settings.dry_run = settings.dry_run or dry_run
 
-    ctx.obj = Runtime(
+    global _ACTIVE_RUNTIME
+    ctx.obj = _ACTIVE_RUNTIME = Runtime(
         settings=settings,
         emitter=Emitter(json_mode=settings.json_output, dry_run=settings.dry_run),
         debug=debug,
@@ -319,11 +329,48 @@ def _usage_error_type() -> type[BaseException] | None:
     return None
 
 
+def _notify(command: str, code: Exit, message: str, detail: str | None = None) -> WebhookResult:
+    """Fire the optional failure webhook. Never raises, never alters the exit code.
+
+    Reads Settings off the module-level runtime because the Typer Context is already unwound
+    by the time an exception reaches the boundary. If the callback never ran — a config error,
+    a usage error — there are no trustworthy settings and no notification is sent.
+    """
+    if _ACTIVE_RUNTIME is None:
+        return WebhookResult.skipped("settings unavailable (config did not load)")
+    settings = _ACTIVE_RUNTIME.settings
+    return notify_failure(
+        settings,
+        command=command,
+        exit_code=int(code),
+        message=message,
+        detail=detail,
+        dry_run=settings.dry_run,
+    )
+
+
+def _fail(
+    emitter: Emitter, command: str, code: Exit, message: str, detail: str | None = None
+) -> int:
+    """Report a failure and notify, in that order. Returns the exit code unchanged.
+
+    Ordering matters: the local report is emitted first so a slow or dead collector cannot
+    delay or suppress the operator-visible output.
+    """
+    emitter.failure(command, code, message, detail)
+    result = _notify(command, code, message, detail)
+    if result.attempted and not result.delivered:
+        # Surfaced on stderr, never fatal — a broken alerting path must not turn a
+        # validation error into something else.
+        emitter.note(f"warning: failure notification not delivered ({result.reason})")
+    return int(code)
+
+
 def main() -> int:
     """Console-script entrypoint. The single exception boundary (OSSYS-SEC-009).
 
     Maps every deliberate error onto the documented exit-code taxonomy so callers branch on
-    a number, never on parsed text.
+    a number, never on parsed text, and fires the optional failure webhook on the way out.
     """
     debug = "--debug" in sys.argv
     json_mode = "--json" in sys.argv
@@ -345,8 +392,7 @@ def main() -> int:
     except OssysError as exc:
         if debug:
             raise
-        emitter.failure(command, exc.exit_code, exc.message, exc.detail)
-        return int(exc.exit_code)
+        return _fail(emitter, command, exc.exit_code, exc.message, exc.detail)
     except typer.Exit as exc:  # pragma: no cover - only if a future Typer re-raises instead
         return int(exc.exit_code)
     except typer.Abort:
@@ -368,17 +414,22 @@ def main() -> int:
             raise
         # Not an OssysError => a bug in ossys, not bad input. Say so plainly rather than
         # laundering it into a taxonomy code that blames the caller.
-        emitter.failure(
+        return _fail(
+            emitter,
             command,
             Exit.EXTERNAL,
             f"internal error: {type(exc).__name__}: {exc}",
             "This is a bug in ossys; re-run with --debug for a traceback.",
         )
-        return int(Exit.EXTERNAL)
 
     # A command that returned an int did so via `typer.Exit`; anything else is a normal
-    # successful return.
-    return rv if isinstance(rv, int) else int(Exit.OK)
+    # successful return. A non-zero code here is a deliberate exit (today: `check` failing
+    # its preflight), which still warrants a notification -- it is exactly the case a fleet
+    # operator wants to hear about.
+    code = rv if isinstance(rv, int) else int(Exit.OK)
+    if code not in (int(Exit.OK), int(Exit.NOOP)):
+        _notify(command, Exit(code), f"{command} exited {code}")
+    return code
 
 
 if __name__ == "__main__":

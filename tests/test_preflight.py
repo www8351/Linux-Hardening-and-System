@@ -126,3 +126,61 @@ def test_no_config_file_is_a_warning_not_a_failure(
     monkeypatch.setattr(preflight, "detect_mode", lambda prefer=None: _report(PrivMode.USER))
     checks = run_checks(Settings(allowed_roots=[str(tmp_path)]))
     assert next(c for c in checks if c.name == "config").status == "warn"
+
+
+# --- webhook ------------------------------------------------------------------------------
+
+
+def test_webhook_unconfigured_is_ok(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(preflight, "detect_mode", lambda prefer=None: _report(PrivMode.USER))
+    checks = run_checks(Settings(allowed_roots=[str(tmp_path)]))
+    assert next(c for c in checks if c.name == "webhook").status == "ok"
+
+
+def test_webhook_check_makes_no_network_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`ossys check` is read-only and schedulable; it must not fire a test alert."""
+    called: list[str] = []
+    monkeypatch.setattr("ossys.notify._post", lambda *a, **kw: called.append("sent"))
+    monkeypatch.setattr(preflight, "detect_mode", lambda prefer=None: _report(PrivMode.USER))
+
+    run_checks(Settings(allowed_roots=[str(tmp_path)], webhook_url="https://collector.example/h"))
+    assert called == []
+
+
+def test_webhook_bad_scheme_fails_the_checkup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(preflight, "detect_mode", lambda prefer=None: _report(PrivMode.USER))
+    checks = run_checks(Settings(allowed_roots=[str(tmp_path)], webhook_url="file:///etc/passwd"))
+    assert next(c for c in checks if c.name == "webhook").status == "fail"
+
+
+def test_webhook_missing_token_env_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Alerting that silently delivers unauthenticated is the worst failure mode: the
+    operator believes it works."""
+    monkeypatch.delenv("OSSYS_ABSENT_TOKEN", raising=False)
+    monkeypatch.setattr(preflight, "detect_mode", lambda prefer=None: _report(PrivMode.USER))
+    checks = run_checks(
+        Settings(
+            allowed_roots=[str(tmp_path)],
+            webhook_url="https://collector.example/h",
+            webhook_token_env="OSSYS_ABSENT_TOKEN",
+        )
+    )
+    check = next(c for c in checks if c.name == "webhook")
+    assert check.status == "fail"
+    assert "OSSYS_ABSENT_TOKEN" in check.detail
+
+
+def test_webhook_disabled_on_failure_warns(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(preflight, "detect_mode", lambda prefer=None: _report(PrivMode.USER))
+    checks = run_checks(
+        Settings(
+            allowed_roots=[str(tmp_path)],
+            webhook_url="https://collector.example/h",
+            webhook_on_failure=False,
+        )
+    )
+    assert next(c for c in checks if c.name == "webhook").status == "warn"

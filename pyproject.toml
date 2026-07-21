@@ -45,7 +45,9 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "S"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests legitimately assert on subprocess argv, use temp paths, and seed the dice RNG.
-"tests/**" = ["S101", "S108", "S311", "S603", "S607"]
+# S105/S106: tests pass env-var *names* like "OSSYS_TOKEN" and dummy tokens; neither is a
+# real credential.
+"tests/**" = ["S101", "S105", "S106", "S108", "S311", "S603", "S607"]
 # S311: the dice utility is explicitly demo output, not security-sensitive randomness —
 # see the module docstring. Using secrets here would imply a guarantee ossys does not make.
 "src/ossys/tasks.py" = ["S311"]

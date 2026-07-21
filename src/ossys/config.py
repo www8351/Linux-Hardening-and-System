@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from .exits import ConfigError
+from .notify import DEFAULT_WEBHOOK_TIMEOUT
 from .privilege import DEFAULT_TIMEOUT
 
 # mypy is configured at the declared floor (3.10), where tomllib is not in the stdlib, so
@@ -86,8 +87,22 @@ class Settings:
     """Extra binaries `ossys check` must find on this endpoint."""
 
     webhook_url: str = ""
+    """Optional failure notification endpoint. Empty disables it entirely — no call, no DNS."""
+
     webhook_on_failure: bool = True
-    """Optional failure notification. Empty URL disables it entirely."""
+    webhook_timeout: float = DEFAULT_WEBHOOK_TIMEOUT
+    """Hard bound on the notification POST. Alerting must not stall the run it reports on."""
+
+    webhook_include_detail: bool = False
+    """Off by default: `detail` often carries an external command's stderr (usernames, paths,
+    host layout), and shipping that off-host without being asked is quiet data egress."""
+
+    webhook_token_env: str = ""
+    """Name of the env var holding the bearer token. The secret never enters ossys.toml,
+    which is mode 0644 and readable by every local user."""
+
+    webhook_allow_http: bool = False
+    """Permit plain http. Off by default — https only."""
 
     def resolved_roots(self) -> list[Path]:
         """Allowed roots as absolute paths, with ~ and $VARS expanded."""
@@ -202,8 +217,7 @@ def _coerce(settings: Settings, table: dict[str, Any], source: str) -> None:
     if webhook is not None:
         if not isinstance(webhook, dict):
             raise ConfigError(f"{source}.webhook must be a table")
-        settings.webhook_url = str(webhook.get("url", settings.webhook_url))
-        settings.webhook_on_failure = bool(webhook.get("on_failure", settings.webhook_on_failure))
+        _coerce_webhook(settings, webhook, f"{source}.webhook")
 
     if settings.mode not in {"auto", "root", "sudo", "user"}:
         raise ConfigError(
@@ -211,6 +225,52 @@ def _coerce(settings: Settings, table: dict[str, Any], source: str) -> None:
         )
     if settings.timeout <= 0:
         raise ConfigError(f"{source}.timeout must be positive (got {settings.timeout})")
+
+
+def _coerce_webhook(settings: Settings, table: dict[str, Any], source: str) -> None:
+    """Overlay the [*.webhook] table, validating the URL eagerly.
+
+    The URL is checked at load time rather than at send time so a typo or an accidental
+    http:// downgrade fails the config (exit 50) and shows up in `ossys check` — instead of
+    being discovered during the first real failure, which is the worst moment to learn the
+    alerting is broken.
+    """
+    from .notify import WebhookConfigError, validate_webhook_url
+
+    known = {"url", "on_failure", "timeout", "include_detail", "token_env", "allow_http"}
+    unknown = set(table) - known
+    if unknown:
+        # Silently ignoring an unknown key means a misspelled `on_failuer = false` leaves
+        # alerting armed while the operator believes it is off.
+        raise ConfigError(f"{source} has unknown keys: {', '.join(sorted(unknown))}")
+
+    def _typed(key: str, expected: type, current: Any) -> Any:
+        if key not in table:
+            return current
+        value = table[key]
+        if expected is float and isinstance(value, int) and not isinstance(value, bool):
+            return float(value)
+        if not isinstance(value, expected) or isinstance(value, bool) is not (expected is bool):
+            raise ConfigError(f"{source}.{key} must be {expected.__name__}, got {value!r}")
+        return value
+
+    settings.webhook_url = _typed("url", str, settings.webhook_url)
+    settings.webhook_on_failure = _typed("on_failure", bool, settings.webhook_on_failure)
+    settings.webhook_timeout = _typed("timeout", float, settings.webhook_timeout)
+    settings.webhook_include_detail = _typed(
+        "include_detail", bool, settings.webhook_include_detail
+    )
+    settings.webhook_token_env = _typed("token_env", str, settings.webhook_token_env)
+    settings.webhook_allow_http = _typed("allow_http", bool, settings.webhook_allow_http)
+
+    if settings.webhook_timeout <= 0:
+        raise ConfigError(f"{source}.timeout must be positive (got {settings.webhook_timeout})")
+
+    if settings.webhook_url:
+        try:
+            validate_webhook_url(settings.webhook_url, allow_http=settings.webhook_allow_http)
+        except WebhookConfigError as exc:
+            raise ConfigError(f"{source}.url: {exc}") from exc
 
 
 def load_settings(*, path: str | Path | None = None, profile: str | None = None) -> Settings:

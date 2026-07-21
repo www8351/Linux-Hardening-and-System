@@ -136,3 +136,82 @@ def test_discovery_order_prefers_user_config_over_etc() -> None:
     home_idx = next(i for i, p in enumerate(chain) if ".config" in p)
     etc_idx = next(i for i, p in enumerate(chain) if "etc" in p)
     assert home_idx < etc_idx
+
+
+# --- webhook ------------------------------------------------------------------------------
+
+
+def _write(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "ossys.toml"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_webhook_defaults_are_closed(tmp_path: Path) -> None:
+    """No URL, https-only, no detail egress, no token — the safe posture."""
+    settings = load_settings(path=_write(tmp_path, "[defaults]\n"))
+    assert settings.webhook_url == ""
+    assert settings.webhook_allow_http is False
+    assert settings.webhook_include_detail is False
+    assert settings.webhook_token_env == ""
+
+
+def test_webhook_table_is_parsed(tmp_path: Path) -> None:
+    cfg = _write(
+        tmp_path,
+        "[defaults.webhook]\n"
+        'url = "https://collector.example/hook"\n'
+        "timeout = 3\n"
+        "include_detail = true\n"
+        'token_env = "OSSYS_TOKEN"\n',
+    )
+    settings = load_settings(path=cfg)
+    assert settings.webhook_url == "https://collector.example/hook"
+    assert settings.webhook_timeout == 3.0
+    assert settings.webhook_include_detail is True
+    assert settings.webhook_token_env == "OSSYS_TOKEN"
+
+
+def test_webhook_url_validated_at_load_time(tmp_path: Path) -> None:
+    """Caught at deployment, not during the first real failure — the worst moment to learn
+    the alerting is broken."""
+    cfg = _write(tmp_path, '[defaults.webhook]\nurl = "http://collector.example/hook"\n')
+    with pytest.raises(ConfigError, match="https"):
+        load_settings(path=cfg)
+
+
+def test_webhook_http_allowed_with_opt_in(tmp_path: Path) -> None:
+    cfg = _write(
+        tmp_path,
+        '[defaults.webhook]\nurl = "http://collector.example/hook"\nallow_http = true\n',
+    )
+    assert load_settings(path=cfg).webhook_url.startswith("http://")
+
+
+def test_webhook_credentials_in_url_rejected(tmp_path: Path) -> None:
+    cfg = _write(tmp_path, '[defaults.webhook]\nurl = "https://u:p@collector.example/h"\n')
+    with pytest.raises(ConfigError, match="credentials"):
+        load_settings(path=cfg)
+
+
+def test_webhook_unknown_key_rejected(tmp_path: Path) -> None:
+    """A misspelled `on_failuer = false` would otherwise leave alerting armed while the
+    operator believes it is off."""
+    cfg = _write(tmp_path, "[defaults.webhook]\non_failuer = false\n")
+    with pytest.raises(ConfigError, match="unknown keys"):
+        load_settings(path=cfg)
+
+
+def test_webhook_negative_timeout_rejected(tmp_path: Path) -> None:
+    cfg = _write(tmp_path, "[defaults.webhook]\ntimeout = -1\n")
+    with pytest.raises(ConfigError, match="must be positive"):
+        load_settings(path=cfg)
+
+
+def test_profile_can_override_webhook(tmp_path: Path) -> None:
+    cfg = _write(
+        tmp_path,
+        '[defaults.webhook]\nurl = "https://default.example/h"\n\n'
+        '[profile.server.webhook]\nurl = "https://server.example/h"\n',
+    )
+    assert load_settings(path=cfg, profile="server").webhook_url == "https://server.example/h"

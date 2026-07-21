@@ -45,8 +45,30 @@ require_tools = []
 [defaults.webhook]
 # Optional failure notification. Empty URL disables it entirely — no network traffic and no
 # DNS lookup happen when this is unset.
+#
+# Fires only on real failures: exit 0 (success) and exit 40 (idempotent no-op) never notify,
+# so a healthy scheduled job stays silent. Delivery failures never change the exit code —
+# a dead collector cannot turn a validation error into something else.
 url = ""
 on_failure = true
+
+# Hard bound on the POST. Alerting must not stall the run it is reporting on.
+timeout = 5
+
+# https is required. Set true only for a plaintext internal collector you accept the risk of.
+allow_http = false
+
+# `detail` usually carries an external command's stderr, which can contain usernames, paths
+# and host layout. Off by default — turning it on means that data leaves the host.
+include_detail = false
+
+# NAME of an environment variable holding the bearer token — not the token itself. This file
+# is mode 0644 and readable by every local user; the secret belongs in the unit's
+# EnvironmentFile (systemd) or the cron job's environment.
+#
+#   systemd:  EnvironmentFile=/etc/ossys/webhook.env   (chmod 0600, root:root)
+#   contents: OSSYS_WEBHOOK_TOKEN=...
+token_env = ""
 
 
 # ---------------------------------------------------------------------------------------
@@ -69,6 +91,11 @@ allowed_roots = ["/var/lib/ossys", "/tmp/ossys"]
 timeout = 60
 json = true
 require_tools = ["useradd", "usermod", "tar"]
+
+[profile.server.webhook]
+# Servers report failures to the internal collector; workstations stay silent.
+url = "https://ossys-collector.prod.internal/hook"
+token_env = "OSSYS_WEBHOOK_TOKEN"
 
 [profile.container]
 # Minimal images already run as root, so sudo is absent and irrelevant.

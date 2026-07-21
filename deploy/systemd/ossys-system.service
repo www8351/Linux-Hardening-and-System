@@ -21,6 +21,11 @@ Type=oneshot
 User=root
 Group=root
 
+# Webhook bearer token, if [*.webhook].token_env names one. Keep this file 0600 root:root --
+# the token must never live in ossys.toml, which is world-readable at 0644. The `-` prefix
+# makes it optional, so the unit still starts on endpoints with no webhook configured.
+EnvironmentFile=-/etc/ossys/webhook.env
+
 # python -m rather than the console script: no PATH dependency, no shim, and immune to the
 # uv trampoline issue (SECURITY_AUDIT.md §5). Adjust the interpreter path to your install.
 ExecStart=/opt/ossys/bin/python -m ossys --profile server --json check --strict

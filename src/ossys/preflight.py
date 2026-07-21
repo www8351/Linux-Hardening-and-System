@@ -34,6 +34,7 @@ import os
 import platform
 import shutil
 import sys
+import urllib.parse
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -166,6 +167,44 @@ def check_allowed_roots(settings: Settings) -> list[Check]:
     return results
 
 
+def check_webhook(settings: Settings) -> Check:
+    """Report the failure-notification posture without contacting the endpoint.
+
+    Deliberately does NOT send a test POST: `ossys check` is read-only and safe to schedule
+    at any frequency, and a checkup that fires an alert every time it runs is worse than no
+    checkup. What is verified is everything that can be verified locally — scheme, host,
+    absence of embedded credentials, and whether the named token env var is actually set.
+
+    A configured token env var that is empty is a *failure*: the alert would be delivered
+    unauthenticated and silently dropped by the collector, which is the failure mode where
+    an operator believes alerting works and it does not.
+    """
+    from .notify import WebhookConfigError, validate_webhook_url
+
+    if not settings.webhook_url:
+        return _check("webhook", "ok", "not configured (no failure notifications)")
+    if not settings.webhook_on_failure:
+        return _check("webhook", "warn", "configured but on_failure is disabled")
+
+    try:
+        validate_webhook_url(settings.webhook_url, allow_http=settings.webhook_allow_http)
+    except WebhookConfigError as exc:
+        return _check("webhook", "fail", str(exc))
+
+    host = urllib.parse.urlsplit(settings.webhook_url).hostname
+    if settings.webhook_token_env and not os.environ.get(settings.webhook_token_env):
+        return _check(
+            "webhook",
+            "fail",
+            f"{host}: token_env {settings.webhook_token_env!r} is set in config but that "
+            "environment variable is empty or unset",
+        )
+
+    detail = f"{host} (timeout {settings.webhook_timeout}s"
+    detail += ", detail included)" if settings.webhook_include_detail else ")"
+    return _check("webhook", "ok", detail)
+
+
 def check_non_interactive() -> Check:
     """Confirm ossys is not attached to a terminal it might be tempted to prompt on.
 
@@ -189,6 +228,7 @@ def run_checks(settings: Settings) -> list[Check]:
     checks.append(check_config(settings))
     checks.extend(check_allowed_roots(settings))
     checks.extend(check_tools(settings, mode))
+    checks.append(check_webhook(settings))
     checks.append(check_non_interactive())
     return checks
 

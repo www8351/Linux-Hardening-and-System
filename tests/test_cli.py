@@ -244,3 +244,128 @@ def test_check_human_output_is_readable(
     _, out, _ = invoke(monkeypatch, capsys, "check")
     assert "[PASS]" in out
     assert "passed" in out
+
+
+# --- failure webhook ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def posted(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Intercept the webhook POST at the transport layer."""
+    sent: list[dict[str, Any]] = []
+
+    def _post(url: str, payload: dict[str, Any], *, timeout: float, token: str | None) -> int:
+        sent.append({"url": url, "payload": payload})
+        return 200
+
+    monkeypatch.setattr("ossys.notify._post", _post)
+    return sent
+
+
+def _with_webhook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **extra: str) -> None:
+    """Point config discovery at a temp ossys.toml carrying a webhook."""
+    body = '[defaults.webhook]\nurl = "https://collector.example/hook"\n'
+    for key, value in extra.items():
+        body += f"{key} = {value}\n"
+    cfg = tmp_path / "ossys.toml"
+    cfg.write_text(body, encoding="utf-8")
+    monkeypatch.setattr("ossys.config.candidate_paths", lambda explicit=None: [cfg])
+
+
+def test_no_webhook_traffic_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    posted: list[dict[str, Any]],
+) -> None:
+    _with_webhook(monkeypatch, tmp_path)
+    code, _, _ = invoke(monkeypatch, capsys, "count", "3")
+    assert code == int(Exit.OK)
+    assert posted == []
+
+
+def test_webhook_fires_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    posted: list[dict[str, Any]],
+) -> None:
+    _with_webhook(monkeypatch, tmp_path)
+    code, _, _ = invoke(monkeypatch, capsys, "count", "0")
+
+    assert code == int(Exit.VALIDATION)
+    assert len(posted) == 1
+    assert posted[0]["payload"]["exit_code"] == int(Exit.VALIDATION)
+    assert posted[0]["payload"]["command"] == "count"
+
+
+def test_webhook_does_not_change_the_exit_code(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A dead collector must not turn a validation error into something else."""
+
+    def _boom(*a: Any, **kw: Any) -> int:
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("ossys.notify._post", _boom)
+    _with_webhook(monkeypatch, tmp_path)
+
+    code, _, err = invoke(monkeypatch, capsys, "count", "0")
+    assert code == int(Exit.VALIDATION)
+    assert "not delivered" in err
+
+
+def test_webhook_suppressed_under_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    posted: list[dict[str, Any]],
+) -> None:
+    outside = tmp_path.parent / "escaped.txt"
+    _with_webhook(monkeypatch, tmp_path)
+    code, _, _ = invoke(
+        monkeypatch,
+        capsys,
+        "--dry-run",
+        "details",
+        "--name",
+        "a",
+        "--age",
+        "1",
+        "--phone",
+        "2",
+        "-o",
+        str(outside),
+    )
+    assert code == int(Exit.VALIDATION)
+    assert posted == []
+
+
+def test_webhook_fires_on_failed_strict_checkup(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    posted: list[dict[str, Any]],
+) -> None:
+    """`check` exits via typer.Exit, which Typer returns rather than raises — the
+    notification must still happen on that path."""
+    _with_webhook(monkeypatch, tmp_path)
+    code, _, _ = invoke(monkeypatch, capsys, "--json", "check", "--strict")
+
+    if code == int(Exit.PREFLIGHT):
+        assert len(posted) == 1
+        assert posted[0]["payload"]["exit_code"] == int(Exit.PREFLIGHT)
+    else:
+        assert posted == []
+
+
+def test_bad_webhook_url_is_a_config_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    cfg = tmp_path / "ossys.toml"
+    cfg.write_text('[defaults.webhook]\nurl = "file:///etc/passwd"\n', encoding="utf-8")
+    monkeypatch.setattr("ossys.config.candidate_paths", lambda explicit=None: [cfg])
+
+    code, _, err = invoke(monkeypatch, capsys, "count", "3")
+    assert code == int(Exit.CONFIG)
+    assert "scheme" in err
