@@ -2,7 +2,7 @@
 
 # 🛠 ossys
 
-**Small system tasks as safe, testable Python — with a non-interactive CLI.**
+**Small system tasks as safe, testable Python with a non-interactive CLI.**
 *משימות מערכת קטנות כפייתון בטוח ובר-בדיקה  עם CLI לא-אינטראקטיבי.*
 
 No more `os.system('... {} ...'.format(user_input))`.
