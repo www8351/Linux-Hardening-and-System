@@ -66,7 +66,7 @@ blocking `input()` menus.
 | `while "True"` `input()` menus | non-interactive Typer CLI (args only) |
 | Linux-only, no tests | pure functions, cross-platform where possible, `pytest` |
 
-Bash can still drive it — see [`scripts/menu.sh`](scripts/menu.sh) — but the logic lives in tested Python.
+Bash can still drive it see [`scripts/menu.sh`](scripts/menu.sh) but the logic lives in tested Python.
 
 ---
 
