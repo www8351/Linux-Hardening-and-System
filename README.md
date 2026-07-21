@@ -2,8 +2,8 @@
 
 # 🛠 ossys
 
-**Small system tasks as safe, testable Python — with a non-interactive CLI.**
-*משימות מערכת קטנות כפייתון בטוח ובר-בדיקה — עם CLI לא-אינטראקטיבי.*
+**Small system tasks as safe, testable Python with a non-interactive CLI.**
+*משימות מערכת קטנות כפייתון בטוח ובר-בדיקה  עם CLI לא-אינטראקטיבי.*
 
 No more `os.system('... {} ...'.format(user_input))`.
 
@@ -28,8 +28,8 @@ No more `os.system('... {} ...'.format(user_input))`.
 
 ### 🇬🇧 English
 
-**ossys** turns a set of common Linux admin tasks — user management, file writes,
-archiving, dice/counting utilities — into **pure, testable Python** behind a
+**ossys** turns a set of common Linux admin tasks user management, file writes,
+archiving, dice/counting utilities into **pure, testable Python** behind a
 non-interactive Typer CLI. It replaces unsafe `os.system(...format())` string-building
 with `subprocess` list-args and strict input validation, so user input **never reaches a shell**.
 
@@ -40,8 +40,8 @@ with `subprocess` list-args and strict input validation, so user input **never r
 
 ### 🇮🇱 עברית
 
-**ossys** הופך אוסף משימות ניהול נפוצות בלינוקס — ניהול משתמשים, כתיבת קבצים, ארכוב,
-כלי ספירה/קוביות — ל**פייתון טהור ובר-בדיקה** מאחורי CLI לא-אינטראקטיבי מבוסס Typer.
+**ossys** הופך אוסף משימות ניהול נפוצות בלינוקס ניהול משתמשים, כתיבת קבצים, ארכוב,
+כלי ספירה/קוביות ל**פייתון טהור ובר-בדיקה** מאחורי CLI לא-אינטראקטיבי מבוסס Typer.
 הוא מחליף בניית-מחרוזות מסוכנת של `os.system(...format())` בארגומנטים-כרשימה ל-`subprocess`
 ובוולידציית קלט קפדנית, כך שקלט המשתמש **לעולם לא מגיע ל-shell**.
 
@@ -56,7 +56,7 @@ with `subprocess` list-args and strict input validation, so user input **never r
 ## 💡 Why
 
 The originals (`all_in_one.py`, `menu_python.py`, `Bash Call Pyhton/pro_*.py`) built shell
-commands from user input with `os.system(...format())` — a textbook injection hole — and ran as
+commands from user input with `os.system(...format())` a textbook injection hole and ran as
 blocking `input()` menus.
 
 | Before ❌ | After ✅ |
@@ -66,7 +66,7 @@ blocking `input()` menus.
 | `while "True"` `input()` menus | non-interactive Typer CLI (args only) |
 | Linux-only, no tests | pure functions, cross-platform where possible, `pytest` |
 
-Bash can still drive it — see [`scripts/menu.sh`](scripts/menu.sh) — but the logic lives in tested Python.
+Bash can still drive it see [`scripts/menu.sh`](scripts/menu.sh) but the logic lives in tested Python.
 
 ---
 
