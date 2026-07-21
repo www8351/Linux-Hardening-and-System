@@ -55,6 +55,35 @@ jobs:
       - name: Endpoint checkup
         run: uv run python -m ossys --json check
 
+      # Proves the Phase 4 contract end to end against a real installed entry point, not a
+      # test double: mount, invoke, propagate exit 40, and honour the allow-list. --no-deps
+      # is deliberate — the example declares `ossys` as a dependency for realism, and
+      # resolving it would fetch an unrelated package of that name from PyPI.
+      - name: Plugin integration
+        run: |
+          set -euo pipefail
+
+          # Capture an exit code without -e aborting the step.
+          rc() { local c=0; "$@" >/dev/null 2>&1 || c=$?; echo "$c"; }
+
+          uv pip install --no-deps -e examples/ossys-plugin-demo
+
+          # Mounted, and reported in the inventory with its distribution.
+          uv run python -m ossys --json plugins | grep -q '"loaded": true'
+
+          # Invokable, and its output is exactly what the plugin produced.
+          test "$(uv run python -m ossys demo hello ci)" = "hello, ci"
+
+          # Exit 40 (idempotent no-op) propagates out through a plugin unchanged.
+          test "$(rc uv run python -m ossys demo hello ci --already)" = "40"
+
+          # Core validators still apply inside a plugin: a control character exits 10.
+          test "$(rc uv run python -m ossys demo hello "$(printf 'a\nb')")" = "10"
+
+          # The allow-list unmounts it: the subcommand stops existing (usage error, 2).
+          printf '[defaults.plugins]\nallowlist = ["nothing"]\n' > /tmp/blocked.toml
+          test "$(rc uv run python -m ossys --config /tmp/blocked.toml demo hello ci)" = "2"
+
   # Supply-chain audit is a separate job so a new CVE advisory does not block an unrelated
   # code change from being merged, while still being visible on every run.
   audit:

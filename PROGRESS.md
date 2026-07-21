@@ -128,3 +128,68 @@ exists yet, and the pre-emptive `safe_extract()` is deliberately deferred until 
 
 Webhook-on-failure — the config keys are parsed and validated but nothing posts yet. Then
 Phase 4 plugin auto-registration.
+
+---
+
+## 2026-07-21 (later still) — Phase 3 completed, Phase 4 landed
+
+**Worked on:** The two remaining planned items — the failure webhook, then plugin
+auto-registration.
+
+### What changed
+
+`src/ossys/notify.py` (failure webhook) and `src/ossys/plugins.py` (entry-point discovery),
+plus config keys, preflight rows, an `ossys plugins` inventory command, CLI wiring,
+`examples/ossys-plugin-demo/` as a working template, and a CI step asserting the whole plugin
+contract end to end.
+
+Tests: 87 → 172 passed, 1 skipped. Coverage 84% → 87%. `plugins.py` at 100%.
+
+### What worked
+
+- **Designing the webhook entirely as negative guarantees.** Disabled by default, never
+  raises, never changes the exit code, never sends on dry-run, never sends on exit 0 or 40,
+  never leaks stderr unless asked, never opens a non-http scheme. Writing the tests as
+  assertions about what does *not* happen made the module fall out almost mechanically.
+- **Validating the webhook URL at config load rather than at send time.** The first real
+  failure is the worst moment to discover alerting is broken. Rejecting unknown keys in the
+  `[*.webhook]` table covers the same class from the other side — a misspelled `on_failuer`
+  would otherwise leave alerting armed while the operator thinks it is off.
+- **Making `ossys check` refuse to send a test POST.** The checkup stays read-only and
+  schedulable. It still catches the important case: a `token_env` naming an unset variable is
+  a *failure*, because the alert would be delivered unauthenticated and silently dropped.
+- **Gating the plugin allow-list at the import, not the mount.** The obvious implementation —
+  load everything, filter afterwards — would let a blocked package run module-level code in a
+  root process. Getting this the right way round was the single most important decision in
+  Phase 4.
+- **The demo plugin proved the contract for real.** Installing it and running `ossys demo
+  hello` end to end verified mounting, exit 40 propagating through a plugin, validator reuse
+  producing exit 10 with a JSON envelope, and the allow-list making the subcommand vanish
+  (exit 2). All five assertions now run in CI.
+
+### What did not work / what surprised
+
+- **Backticks in a `git commit -m "..."` heredoc ran as command substitution.** The message
+  for the webhook commit lost the word "detail" — bash executed `` `detail` `` and reported
+  "command not found". Caught by re-reading the committed message, and amended from a file.
+  Commit bodies now go through `-F`, never `-m` with backticks.
+- **Plugin registration is a genuine ordering problem.** Typer cannot dispatch to a subcommand
+  that is not on the app yet, but the allow-list governing registration lives in the config
+  file selected by `--config`. Resolved with a deliberately-not-a-parser argv pre-scan in
+  `main()`, with the callback doing the authoritative load moments later. If the pre-load
+  fails, discovery is skipped entirely rather than falling back to permissive defaults.
+- **Ruff B023 caught a closure capturing loop variables** in `discover()`. Safe as written
+  (called within the same iteration) but exactly the shape that breaks the moment anyone
+  defers the call. Rebound explicitly via default arguments.
+- **mypy strict rejected `PluginRecord.status -> str`** where preflight wanted a `Literal`.
+  Declared `PluginStatus` in `plugins.py` rather than importing from `preflight`, keeping the
+  dependency one-way (preflight imports plugins, never the reverse).
+
+### Findings status
+
+Unchanged: OSSYS-SEC-018 (pre-commit mypy deps) and OSSYS-SEC-017 (zip-slip, INFO — still no
+extraction code, so the pre-emptive `safe_extract()` remains deferred by design).
+
+### Next
+
+Phase 5: verify `pipx install .` on a clean machine, and the optional Dockerfile.

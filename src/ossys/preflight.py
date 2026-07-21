@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .config import Settings
+from .plugins import PluginRecord
 from .privilege import PrivMode, detect_mode, is_posix
 
 Status = Literal["ok", "warn", "fail"]
@@ -205,6 +206,23 @@ def check_webhook(settings: Settings) -> Check:
     return _check("webhook", "ok", detail)
 
 
+def check_plugins(records: list[PluginRecord] | None) -> list[Check]:
+    """One row per discovered plugin — the supply-chain audit trail.
+
+    A loaded plugin reports the distribution it came from, so `ossys check --json` collected
+    across a fleet answers "what third-party code is mounted on these hosts, and from which
+    package version". A plugin that failed to import is a failure row; one merely filtered
+    out by the allow-list is a warning, since that is the operator's own policy working.
+    """
+    if not records:
+        return []
+    results: list[Check] = []
+    for record in records:
+        detail = record.distribution if record.loaded else record.error
+        results.append(_check(f"plugin:{record.name}", record.status, detail))
+    return results
+
+
 def check_non_interactive() -> Check:
     """Confirm ossys is not attached to a terminal it might be tempted to prompt on.
 
@@ -220,7 +238,7 @@ def check_non_interactive() -> Check:
     )
 
 
-def run_checks(settings: Settings) -> list[Check]:
+def run_checks(settings: Settings, plugin_records: list[PluginRecord] | None = None) -> list[Check]:
     """Run the full checkup. Never raises; every failure becomes a result row."""
     checks: list[Check] = [check_python(), check_platform()]
     priv_check, mode = check_privilege(settings)
@@ -229,6 +247,7 @@ def run_checks(settings: Settings) -> list[Check]:
     checks.extend(check_allowed_roots(settings))
     checks.extend(check_tools(settings, mode))
     checks.append(check_webhook(settings))
+    checks.extend(check_plugins(plugin_records))
     checks.append(check_non_interactive())
     return checks
 

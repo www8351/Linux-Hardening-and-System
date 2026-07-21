@@ -2,8 +2,8 @@
 
 **Last updated:** 2026-07-21
 **Branch:** `main` · **Baseline before this session:** `15d27d8`
-**Tests:** `87 passed, 1 skipped` · **Coverage:** 84% (gate: ≥80%) · **mypy strict:** clean · **ruff (incl. `S`):** clean
-**Current phase:** Phases 1–3 landed. Phase 4 (plugins) and 5 (packaging/Docker) open.
+**Tests:** `172 passed, 1 skipped` · **Coverage:** 87% (gate: ≥80%) · **mypy strict:** clean · **ruff (incl. `S`):** clean
+**Current phase:** Phases 1–4 complete. Phase 5 (packaging/Docker) and 6 (MCP) open.
 
 ---
 
@@ -32,6 +32,12 @@ exit-code taxonomy.
 - [x] `ossys check` endpoint checkup, human + `--json`, `--strict` deployment gate
 - [x] `python -m ossys` entrypoint (works around the uv trampoline bug)
 - [x] Coverage gate at 80% wired into CI; `S` (flake8-bandit) ruleset enabled
+- [x] **Phase 3 complete** — failure webhook (`ossys/notify.py`), off by default, https-only,
+      token from env, detail egress opt-in, never alters the exit code
+- [x] **Phase 4** — entry-point plugin auto-registration (`ossys/plugins.py`), allow-list,
+      kill switch, shadow refusal, failure isolation, `ossys plugins` inventory
+- [x] `examples/ossys-plugin-demo/` — working plugin template; CI asserts the full contract
+      (mount, invoke, exit 40 propagation, validator reuse, allow-list unmount)
 
 ## Findings status
 
@@ -55,15 +61,14 @@ exit-code taxonomy.
 ## Open
 
 - [ ] **OSSYS-SEC-018** — add `additional_dependencies: [typer, pytest]` to the pre-commit mypy hook and pin revs to `uv.lock`
-- [ ] **Phase 3 remainder** — webhook-on-failure hook (config keys `webhook.url` / `webhook.on_failure` exist and are parsed, but nothing posts yet)
-- [ ] **Phase 4** — plugin/subcommand auto-registration via entry points
 - [ ] **Phase 5** — verify `pipx install .`; optional Dockerfile for sandboxed destructive commands
 - [ ] **Phase 6** — MCP tool server wrapper
 
 ## Next best action
 
-Wire the webhook-on-failure hook into `main()`'s exception boundary — the config surface is
-already parsed and validated, so this is the smallest remaining piece of Phase 3.
+Phase 5. `pipx install .` has not been exercised — the entrypoint changed to `ossys.cli:main`
+and the console-script path is still unverified on a clean machine (CI now builds a wheel and
+smoke-tests `python -m ossys`, which deliberately bypasses the shim).
 
 ## Blockers / waiting on
 
@@ -84,6 +89,15 @@ Nothing blocking. Two decisions were taken unilaterally and should be confirmed:
   shellcheck-clean and CI lints it, but end-to-end install is untested.
 - The `sudo -n true` probe runs on every privileged invocation via `build_argv`. Fine for a
   scheduled job; worth caching if a future command issues many calls in one run.
+- **Plugin allow-list defaults to empty (allow all).** Correct for a workstation, deliberately
+  wrong-by-default for a privileged fleet host — `deploy/ossys.toml.example` pins it under
+  `[profile.server.plugins]`, but an operator copying only `[defaults]` would not get that.
+  Worth deciding whether privileged profiles should default to deny.
+- **Plugins are not sandboxed** and the docs say so explicitly. A loaded plugin runs with full
+  process privilege; the allow-list decides what loads, not what it may then do.
+- `examples/ossys-plugin-demo/pyproject.toml` declares `ossys` as a dependency for realism.
+  There may be an unrelated `ossys` on PyPI — installs use `--no-deps` for that reason, in CI
+  and in the README.
 
 ## Known environment issue
 

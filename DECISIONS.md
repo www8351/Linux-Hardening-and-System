@@ -283,3 +283,165 @@ CSPRNG there would imply a security guarantee ossys does not make, and would bre
 injectable-`random.Random` seam the tests rely on for determinism. Suppressed per-file so the
 `S` ruleset stays enabled everywhere else — including on the subprocess call sites, which is
 the reason it was turned on (D-007).
+
+---
+
+## D-017 — Webhook does not block private or link-local destinations
+
+**Date:** 2026-07-21 · **Status:** Final
+
+`validate_webhook_url` enforces a scheme allow-list and rejects embedded credentials, but
+does **not** filter the destination address.
+
+**Why:** the intended deployment is a fleet of endpoints reporting to an *internal*
+collector — `https://ossys-collector.prod.internal/hook`, a 10.x address, a `.local` name.
+SSRF-style private-range filtering would break the normal case while protecting against a
+threat that does not exist here: the URL is operator-set in a root-owned config file, not
+attacker-supplied. Blocking it would push operators toward `allow_http` or a public relay,
+both strictly worse.
+
+**Reconsider if:** ossys ever accepts a webhook URL from a non-operator source — a CLI flag,
+an environment variable, an API. At that point the URL becomes untrusted input and the
+filtering calculus inverts.
+
+---
+
+## D-018 — Webhook is a side channel that cannot affect the outcome
+
+**Date:** 2026-07-21 · **Status:** Final
+
+Every failure inside `notify.py` — DNS, refused connection, TLS handshake, timeout, non-2xx
+— is caught and returned as a `WebhookResult`. Delivery problems produce a stderr warning
+and nothing else. The local failure report is emitted *before* the POST is attempted.
+
+**Why:** the caller is already on an error path. If a dead collector could raise, a
+validation error (exit 10) would surface as a network error, and the operator would debug
+the wrong thing. Emitting locally first also means a slow collector cannot delay or suppress
+the operator-visible output.
+
+**Rejected:** retries with backoff. On a scheduled tool, retrying multiplies the delay
+between the failure and the operator seeing it, and the next timer tick will re-report
+anyway. One attempt with a hard timeout.
+
+---
+
+## D-019 — Webhook secrets come from the environment, detail egress is opt-in
+
+**Date:** 2026-07-21 · **Status:** Final
+
+`token_env` names an environment variable rather than holding a token, and
+`include_detail` defaults to **false**.
+
+**Why the env var:** `ossys.toml` is installed 0644 and readable by every local user. A
+config file is the wrong place for a bearer token. The systemd unit gains
+`EnvironmentFile=-/etc/ossys/webhook.env` (0600 root:root) for it. URLs with embedded
+credentials are rejected for the same reason.
+
+**Why detail is opt-in:** `detail` usually carries an external command's stderr — usernames,
+paths, host layout. Shipping that off-host by default is exactly the quiet data egress a
+hardening tool should not do. When enabled it is truncated at 2000 characters.
+
+---
+
+## D-020 — Webhook URL validated at config load, not at send time
+
+**Date:** 2026-07-21 · **Status:** Final
+
+A bad URL fails the config with exit 50 and shows up in `ossys check`. Unknown keys in the
+`[*.webhook]` table are rejected outright.
+
+**Why:** the first real failure is the worst possible moment to discover that alerting is
+broken. Validating eagerly moves that discovery to deployment. Rejecting unknown keys covers
+the same class from the other side: a misspelled `on_failuer = false` would otherwise leave
+alerting armed while the operator believes it is off.
+
+`ossys check` deliberately does **not** send a test POST — the checkup is read-only and
+schedulable, and one that fires an alert every run is worse than none. A `token_env` naming
+an unset variable is a *failure*, not a warning, because the alert would be delivered
+unauthenticated and silently dropped by the collector.
+
+---
+
+## D-021 — Plugins load via entry points, gated by an allow-list
+
+**Date:** 2026-07-21 · **Status:** Final
+
+Phase 4. Packages declare an entry point in the `ossys.plugins` group; ossys discovers and
+mounts them. `[*.plugins] allowlist` pins which may load; `enabled = false` disables
+discovery entirely.
+
+**Why entry points:** it is the only mechanism that satisfies "new domains snap in without
+touching core" without ossys maintaining a registry of known plugins — which would defeat
+the point.
+
+**Why the allow-list:** discovery imports third-party code into a process that, on the
+privileged path, runs as root. Empty (allow all) is right for a workstation and wrong for a
+fleet host, where any package landing in the venv — including as a transitive dependency —
+could otherwise mount a root-run subcommand. The allow-list gates the **import**, not just
+the mount, so a blocked package never executes module-level code.
+
+**Rejected:** requiring explicit opt-in for every plugin (breaks the "snap in" goal on the
+unprivileged path, where the risk is low). Also rejected: signature verification of plugin
+packages — that is the package manager's job, and a half-implementation would imply a
+guarantee ossys cannot make.
+
+**Explicitly out of scope:** sandboxing. Once loading is permitted the plugin has full
+process privilege. These controls decide *what loads* and record *what did*; they do not
+contain it afterwards. The module docstring says so plainly rather than implying otherwise.
+
+---
+
+## D-022 — Plugins cannot shadow core commands, and duplicates are refused
+
+**Date:** 2026-07-21 · **Status:** Final
+
+A plugin named `useradd`, `check`, `plugins`, etc. is refused. Two distributions claiming the
+same name: the first wins, the second is recorded as rejected.
+
+**Why no shadowing:** an installed package could otherwise silently redefine a core command,
+and every timer already pointing at it would quietly start running someone else's code
+without a single config or unit file changing.
+
+**Why refuse duplicates rather than pick one:** any silent resolution makes behaviour depend
+on installation order, which is not reproducible across a fleet. Refusing the second is the
+only deterministic outcome, and the rejection is visible in `ossys plugins`.
+
+---
+
+## D-023 — A broken plugin is recorded, not fatal; and every plugin is enumerable
+
+**Date:** 2026-07-21 · **Status:** Final
+
+Import failures are caught per plugin and reported as a row in `ossys plugins` and a check
+row in `ossys check`. `ossys check --json` includes each loaded plugin's **distribution**.
+
+**Why isolation:** a broken third-party package must not take down `ossys check` or the core
+commands. Otherwise a cosmetic dependency problem becomes a fleet-wide outage, and the one
+command that would diagnose it is the one that stopped working.
+
+**Why the inventory:** a plugin host with no way to enumerate what it loaded is a
+supply-chain blind spot. Rejected plugins are listed too, so "the subcommand is missing" is
+distinguishable from "the allow-list blocked it" without reading config on the box.
+
+---
+
+## D-024 — Plugin registration happens in `main()`, before Typer parses argv
+
+**Date:** 2026-07-21 · **Status:** Final
+
+`main()` pre-scans argv for `--config` / `--profile`, loads Settings, and registers plugins
+before invoking the app. The Typer callback then does the authoritative load.
+
+**Why:** a subcommand that is not on the app cannot be dispatched to, so registration must
+precede parsing — but the allow-list governing registration lives in the config file that
+`--config` selects. The pre-scan is deliberately not a parser; anything it gets wrong is
+corrected moments later by the callback.
+
+**Failure handling:** if the pre-load raises, discovery is skipped entirely rather than
+falling back to permissive defaults. A config we cannot parse is not a config whose
+allow-list we should guess at. The real `ConfigError` still surfaces from the callback with
+exit 50.
+
+**Rejected:** registering at module import (no access to `--config`), and registering
+everything then filtering at invocation time (the blocked package would already have been
+imported, defeating the control).

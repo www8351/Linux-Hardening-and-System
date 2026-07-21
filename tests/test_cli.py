@@ -369,3 +369,91 @@ def test_bad_webhook_url_is_a_config_error(
     code, _, err = invoke(monkeypatch, capsys, "count", "3")
     assert code == int(Exit.CONFIG)
     assert "scheme" in err
+
+
+# --- plugins --------------------------------------------------------------------------------
+
+
+def test_plugins_command_with_none_installed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("ossys.plugins._entry_points", list)
+    code, out, _ = invoke(monkeypatch, capsys, "plugins")
+    assert code == int(Exit.OK)
+    assert "no plugins installed" in out
+
+
+def test_plugins_json_inventory_is_the_audit_trail(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Entry points add subcommands that may run as root; the inventory is what makes that
+    reviewable."""
+    import typer as _typer
+
+    class _EP:
+        name = "demo"
+        value = "demo_pkg:app"
+
+        class dist:
+            name = "ossys-plugin-demo"
+            version = "0.1.0"
+
+        def load(self) -> _typer.Typer:
+            return _typer.Typer()
+
+    monkeypatch.setattr("ossys.plugins._entry_points", lambda: [_EP()])
+
+    code, out, _ = invoke(monkeypatch, capsys, "--json", "plugins")
+    payload = _json_stdout(out)
+
+    assert code == int(Exit.OK)
+    assert payload["group"] == "ossys.plugins"
+    assert payload["count"] == 1
+    assert payload["plugins"][0]["distribution"] == "ossys-plugin-demo 0.1.0"
+
+
+def test_broken_plugin_does_not_break_core_commands(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The isolation guarantee, exercised through the real entrypoint."""
+
+    class _EP:
+        name = "broken"
+        value = "broken_pkg:app"
+        dist = None
+
+        def load(self) -> object:
+            raise ImportError("no module named nope")
+
+    monkeypatch.setattr("ossys.plugins._entry_points", lambda: [_EP()])
+
+    code, out, _ = invoke(monkeypatch, capsys, "count", "3")
+    assert code == int(Exit.OK)
+    assert out.split() == ["1", "2", "3"]
+
+
+def test_unparseable_config_skips_plugin_discovery(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A config we cannot parse is not a config whose allow-list we should guess at — and the
+    real ConfigError must still surface with exit 50."""
+    loaded: list[str] = []
+
+    class _EP:
+        name = "demo"
+        value = "demo_pkg:app"
+        dist = None
+
+        def load(self) -> object:
+            loaded.append("imported")
+            raise AssertionError("must not be imported")
+
+    bad = tmp_path / "ossys.toml"
+    bad.write_text("[defaults\n", encoding="utf-8")
+    monkeypatch.setattr("ossys.config.candidate_paths", lambda explicit=None: [bad])
+    monkeypatch.setattr("ossys.plugins._entry_points", lambda: [_EP()])
+
+    code, _, err = invoke(monkeypatch, capsys, "count", "3")
+    assert code == int(Exit.CONFIG)
+    assert "malformed TOML" in err
+    assert loaded == []

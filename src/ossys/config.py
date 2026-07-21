@@ -104,6 +104,13 @@ class Settings:
     webhook_allow_http: bool = False
     """Permit plain http. Off by default — https only."""
 
+    plugins_enabled: bool = True
+    """Master switch for entry-point plugin discovery. False imports no third-party code."""
+
+    plugins_allowlist: list[str] = field(default_factory=list)
+    """Plugin names this endpoint may load. Empty means allow all — fine for a workstation,
+    wrong for a privileged fleet host, where plugins add root-run subcommands."""
+
     def resolved_roots(self) -> list[Path]:
         """Allowed roots as absolute paths, with ~ and $VARS expanded."""
         from .validate import expand_root
@@ -212,6 +219,25 @@ def _coerce(settings: Settings, table: dict[str, Any], source: str) -> None:
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 raise ConfigError(f"{source}.{key} must be a list of strings")
             setattr(settings, attr, value)
+
+    plugins = table.get("plugins")
+    if plugins is not None:
+        if not isinstance(plugins, dict):
+            raise ConfigError(f"{source}.plugins must be a table")
+        unknown_plugin_keys = set(plugins) - {"enabled", "allowlist"}
+        if unknown_plugin_keys:
+            raise ConfigError(
+                f"{source}.plugins has unknown keys: {', '.join(sorted(unknown_plugin_keys))}"
+            )
+        if "enabled" in plugins:
+            if not isinstance(plugins["enabled"], bool):
+                raise ConfigError(f"{source}.plugins.enabled must be bool")
+            settings.plugins_enabled = plugins["enabled"]
+        if "allowlist" in plugins:
+            value = plugins["allowlist"]
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                raise ConfigError(f"{source}.plugins.allowlist must be a list of strings")
+            settings.plugins_allowlist = value
 
     webhook = table.get("webhook")
     if webhook is not None:

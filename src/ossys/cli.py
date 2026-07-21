@@ -45,6 +45,7 @@ from .config import Settings, load_settings
 from .exits import AlreadyDone, Exit, OssysError
 from .notify import WebhookResult, notify_failure
 from .output import Emitter
+from .plugins import ENTRY_POINT_GROUP, PluginRecord, register
 from .preflight import config_search_path, run_checks, summarise
 from .privilege import PrivilegeReport, detect_mode
 from .system import add_user as _add_user
@@ -83,6 +84,11 @@ class Runtime:
 # the callback; None means config never loaded, in which case no notification is attempted
 # (a config we could not parse is not a config we should trust a URL from).
 _ACTIVE_RUNTIME: Runtime | None = None
+
+# Discovery results, populated by main() before the command tree is invoked. Kept module
+# level for the same reason as _ACTIVE_RUNTIME: registration must happen before Typer parses
+# argv, so it cannot live on the Context.
+_PLUGIN_RECORDS: list[PluginRecord] = []
 
 
 def _runtime(ctx: typer.Context) -> Runtime:
@@ -152,7 +158,7 @@ def check(
     """
     rt = _runtime(ctx)
     settings = rt.settings
-    checks = run_checks(settings)
+    checks = run_checks(settings, _PLUGIN_RECORDS)
     verdict = summarise(checks, strict=strict)
 
     payload: dict[str, Any] = {
@@ -165,6 +171,10 @@ def check(
         "allowed_roots": [str(p) for p in settings.resolved_roots()],
         "timeout": settings.timeout,
         "dry_run": settings.dry_run,
+        "plugins": [
+            {"name": r.name, "loaded": r.loaded, "distribution": r.distribution}
+            for r in _PLUGIN_RECORDS
+        ],
     }
 
     if settings.json_output:
@@ -302,6 +312,47 @@ def useradd(
 
 
 @app.command()
+def plugins(ctx: typer.Context) -> None:
+    """List discovered plugins, whether they loaded, and which package they came from.
+
+    A plugin host without an inventory command is a supply-chain blind spot: entry points
+    add subcommands that may run as root, and you cannot review what you cannot enumerate.
+    Rejected plugins are listed too, so a missing subcommand is distinguishable from one
+    blocked by the allow-list.
+    """
+    rt = _runtime(ctx)
+    records = _PLUGIN_RECORDS
+
+    rt.out.result(
+        "plugins",
+        {
+            "group": ENTRY_POINT_GROUP,
+            "enabled": rt.settings.plugins_enabled,
+            "allowlist": rt.settings.plugins_allowlist,
+            "count": sum(1 for r in records if r.loaded),
+            "plugins": [
+                {
+                    "name": r.name,
+                    "loaded": r.loaded,
+                    "distribution": r.distribution,
+                    "target": r.target,
+                    "error": r.error,
+                }
+                for r in records
+            ],
+        },
+        lines=(
+            [
+                f"[{'OK ' if r.loaded else 'SKIP'}] {r.name:<16} "
+                f"{r.distribution or '-':<28} {r.error}".rstrip()
+                for r in records
+            ]
+            or ["no plugins installed"]
+        ),
+    )
+
+
+@app.command()
 def version(ctx: typer.Context) -> None:
     """Print the ossys version."""
     rt = _runtime(ctx)
@@ -366,6 +417,41 @@ def _fail(
     return int(code)
 
 
+def _preparse(argv: list[str], flag: str) -> str | None:
+    """Pull a single ``--flag value`` (or ``--flag=value``) out of argv without full parsing.
+
+    Plugin registration has to happen *before* Typer parses argv — a subcommand that is not
+    on the app yet cannot be dispatched to — but the allow-list that governs registration
+    lives in the config file, which is selected by ``--config`` / ``--profile``. This walks
+    argv for just those two options. It is deliberately not a parser: anything it gets wrong
+    is corrected moments later when the callback does the real load.
+    """
+    for i, arg in enumerate(argv):
+        if arg == flag and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith(f"{flag}="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _register_plugins() -> list[PluginRecord]:
+    """Mount plugins before the command tree is parsed. Never raises.
+
+    Settings are loaded a second time here (the callback does the authoritative load). If
+    that fails — malformed TOML, unknown profile — discovery is skipped entirely rather than
+    falling back to permissive defaults: a config we cannot parse is not a config whose
+    allow-list we should guess at. The real ConfigError surfaces from the callback with a
+    proper exit code.
+    """
+    try:
+        settings = load_settings(
+            path=_preparse(sys.argv, "--config"), profile=_preparse(sys.argv, "--profile")
+        )
+    except Exception:
+        return []
+    return register(app, settings)
+
+
 def main() -> int:
     """Console-script entrypoint. The single exception boundary (OSSYS-SEC-009).
 
@@ -377,6 +463,9 @@ def main() -> int:
     emitter = Emitter(json_mode=json_mode)
     command = next((a for a in sys.argv[1:] if not a.startswith("-")), "ossys")
     usage_error = _usage_error_type()
+
+    global _PLUGIN_RECORDS
+    _PLUGIN_RECORDS = _register_plugins()
 
     try:
         # With standalone_mode=False, Typer/Click does NOT re-raise `typer.Exit` — it catches

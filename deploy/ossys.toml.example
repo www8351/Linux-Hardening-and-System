@@ -42,6 +42,18 @@ dry_run = false
 # Extra binaries `ossys check` must find on this endpoint, beyond the built-in set.
 require_tools = []
 
+[defaults.plugins]
+# Entry-point plugins (group "ossys.plugins") attach new admin domains as separate packages.
+# Discovery means IMPORTING third-party code -- in a root process on the privileged path.
+enabled = true
+
+# Which plugins this host may load, by name. EMPTY MEANS ALLOW ALL: fine for a workstation,
+# wrong for a privileged fleet host, where any package installed into the venv could add
+# root-run subcommands. Pin it on servers -- see [profile.server.plugins] below.
+#
+# `ossys plugins` lists what is installed and which distribution each came from.
+allowlist = []
+
 [defaults.webhook]
 # Optional failure notification. Empty URL disables it entirely — no network traffic and no
 # DNS lookup happen when this is unset.
@@ -91,6 +103,11 @@ allowed_roots = ["/var/lib/ossys", "/tmp/ossys"]
 timeout = 60
 json = true
 require_tools = ["useradd", "usermod", "tar"]
+
+[profile.server.plugins]
+# Privileged endpoints pin the list. A package landing in the venv -- pulled in as a
+# transitive dependency, say -- cannot then mount a subcommand that runs as root.
+allowlist = ["backups"]
 
 [profile.server.webhook]
 # Servers report failures to the internal collector; workstations stay silent.

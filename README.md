@@ -166,6 +166,24 @@ Start from [`deploy/ossys.toml.example`](deploy/ossys.toml.example).
 > directory). `ossys details -o /etc/foo` exits `10` instead of writing. See `DECISIONS.md`
 > D-005.
 
+### Failure notifications
+
+Optional, **off by default** — an empty `url` means no call, no DNS lookup, no socket.
+
+```toml
+[defaults.webhook]
+url        = "https://collector.internal/ossys"
+timeout    = 5           # alerting must not stall the run it reports on
+token_env  = "OSSYS_WEBHOOK_TOKEN"   # the NAME of an env var, never the token itself
+allow_http = false       # https only
+include_detail = false   # command stderr stays on the host unless you opt in
+```
+
+Fires only on real failures — exit `0` and exit `40` never notify, so a healthy timer stays
+silent. A dead collector **cannot change the exit code**: delivery problems are a stderr
+warning and nothing more. The URL is validated when the config loads, so a typo fails at
+deployment (exit `50`) instead of during your first real outage.
+
 ### Machine-readable output
 
 ```bash
@@ -178,6 +196,48 @@ on both the success and failure paths.
 
 ---
 
+## 🔌 Plugins · new domains without touching core
+
+Declare an entry point; ossys mounts it. No edit to ossys required.
+
+```toml
+# in your plugin's pyproject.toml
+[project.entry-points."ossys.plugins"]
+docker = "ossys_docker:app"
+```
+
+```bash
+pip install ossys-docker
+ossys docker ps          # mounted automatically
+ossys plugins            # what is installed, and which package it came from
+```
+
+The target is a `typer.Typer`, or a zero-arg callable returning one. Copy
+[`examples/ossys-plugin-demo/`](examples/ossys-plugin-demo) as a starting point — it shows
+validator reuse and the exit-40 idempotency signal.
+
+**Being installed is being trusted.** Discovery imports third-party code into a process that,
+on the privileged path, is root. So:
+
+```toml
+[profile.server.plugins]
+allowlist = ["backups"]   # only these load. Empty = allow all.
+enabled   = true          # false disables discovery entirely — nothing is imported
+```
+
+- `allowlist` gates the **import**, not just the mount, so a blocked package never runs
+  module-level code.
+- `ossys plugins` and `ossys check` report every plugin and its **distribution** — a plugin
+  host with no inventory is a supply-chain blind spot.
+- A plugin that fails to import is recorded and skipped; core commands keep working.
+- Plugins **cannot shadow** core command names, so nothing can silently redefine `useradd`
+  for the timers already pointing at it.
+
+This decides *what loads* and records *what did*. It does not sandbox — once permitted, a
+plugin runs with full process privilege.
+
+---
+
 ## 🧱 Layout
 
 | Module | Responsibility |
@@ -187,6 +247,8 @@ on both the success and failure paths.
 | `privilege.py` | root/sudo/user detection; shell-free, bounded command execution |
 | `config.py` | TOML per-endpoint config and profile selection |
 | `preflight.py` | the `ossys check` endpoint checkup |
+| `notify.py` | optional failure webhook (off by default, never alters the exit code) |
+| `plugins.py` | entry-point discovery, allow-list, and the plugin inventory |
 | `output.py` | JSON / human emitter (all output goes through here) |
 | `tasks.py` | pure logic: `count_to`, `roll_cubes`, `save_details`, `archive_files` |
 | `system.py` | privileged ops via the privilege layer + username validation |
@@ -194,6 +256,7 @@ on both the success and failure paths.
 | `scripts/ossys-run.sh` | scheduled-run wrapper — gates on `ossys check`, passes exit codes through |
 | `scripts/menu.sh` | thin bash wrapper (replaces the old interactive menu) |
 | `deploy/` | systemd units, cron files, config example, endpoint installer |
+| `examples/ossys-plugin-demo/` | working plugin template |
 
 ---
 
