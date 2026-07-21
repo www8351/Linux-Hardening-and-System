@@ -1,87 +1,156 @@
 """Module:   ossys.system
 
-Purpose:  Privileged, Linux-only system operations (user provisioning) implemented as
-          shell-free ``subprocess`` calls.
+Purpose:  Privileged, Linux-only system operations (user provisioning) executed through the
+          endpoint's privilege layer — shell-free, bounded, and idempotent.
 
 Usage:    from ossys.system import add_user
-          add_user("alice", sudo_group=True)   # creates the user, adds it to `sudo`
+          from ossys.privilege import detect_mode
+          result = add_user("alice", mode=detect_mode().mode, sudo_group=True)
 
 Security notes:
     * The original code built commands with ``os.system('sudo useradd ' + name)`` — a
       textbook shell-injection hole: a username like ``"bob; rm -rf /"`` would be parsed
-      and executed by ``/bin/sh`` as two commands.
-    * Here every external command is passed to ``subprocess.run`` as an *argument list*.
-      No shell is ever spawned (``shell=True`` is never used), so user input can never be
-      reinterpreted as shell syntax — it is always a single, literal argv entry.
-    * Defense in depth: ``validate_username`` rejects anything outside a strict allow-list
-      pattern *before* the value reaches subprocess at all.
-    * Least privilege: ``sudo`` is prefixed only when needed, and group escalation happens
-      only when the caller explicitly opts in via ``sudo_group``.
+      and executed by ``/bin/sh`` as two commands. That class is closed: every external
+      command is an argv list, no shell is ever spawned, and the executable is pinned to an
+      absolute resolved path (see ossys.privilege).
+    * Defence in depth: ``validate_username`` rejects anything outside a strict allow-list
+      *before* the value reaches subprocess at all.
+    * OSSYS-SEC-005 — tool paths resolved by ``require_tools`` are now *used*, not merely
+      checked and discarded, so PATH cannot be re-resolved to a different binary between
+      the check and the exec.
+    * OSSYS-SEC-007 — every tool the requested operation needs is resolved before the first
+      mutating call, so a host missing ``usermod`` fails cleanly instead of leaving a
+      created-but-ungrouped account behind.
+    * OSSYS-SEC-006 — calls are bounded by a timeout with stdin closed, so a sudo password
+      prompt fails fast instead of hanging a cron job forever.
+    * OSSYS-SEC-011 — the platform is checked explicitly rather than being discovered
+      indirectly via a missing binary.
+    * Idempotency: creating a user that already exists is a no-op (Exit.NOOP), not an error.
+      Schedulers re-run; an operation that fails the second time is not automatable.
 """
 
 from __future__ import annotations
 
-import re
-import shutil
-import subprocess
+import sys
+from dataclasses import dataclass
 
-# Conservative POSIX-ish username allow-list, anchored end-to-end:
-#   * must start with a lowercase letter or underscore (no leading digits/dashes),
-#   * may contain lowercase letters, digits, underscores and hyphens,
-#   * capped at 32 chars total (1 + up to 31) to match common useradd limits.
-# Anchoring (^...$) plus the length bound means the pattern cannot be bypassed with
-# embedded newlines or trailing shell metacharacters.
-_USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+from .exits import AlreadyDone, PermissionDenied
+from .privilege import DEFAULT_TIMEOUT, PrivMode, require_tools, run
+from .validate import validate_username
+
+# Retained for backwards compatibility with callers/tests that imported it from here before
+# validation was centralised in ossys.validate (DECISIONS.md D-004).
+__all__ = ["SystemError_", "UserResult", "add_user", "user_exists", "validate_username"]
 
 
 class SystemError_(RuntimeError):
-    """Raised when a privileged command fails or a required system tool is missing."""
+    """Deprecated alias kept so existing importers do not break.
 
-
-def _require(tool: str) -> str:
-    """Resolve ``tool`` on ``PATH`` or fail loudly.
-
-    Checking for the binary up front turns a confusing ``FileNotFoundError`` from
-    subprocess into an explicit, actionable error (and avoids partial state where, e.g.,
-    ``useradd`` succeeds but ``usermod`` is missing).
+    New code raises the ossys.exits hierarchy, which carries an exit code.
     """
-    path = shutil.which(tool)
-    if path is None:
-        raise SystemError_(f"required tool not found: {tool}")
-    return path
 
 
-def validate_username(username: str) -> str:
-    """Return ``username`` unchanged if it matches the strict allow-list, else raise.
+@dataclass(frozen=True)
+class UserResult:
+    """Outcome of a user-provisioning call, structured for --json and for idempotency."""
 
-    This is the trust boundary: callers must route any externally supplied username
-    through here before it is used in a privileged command.
+    username: str
+    created: bool
+    sudo_group: bool
+    already_existed: bool
+    dry_run: bool
+
+
+def _require_linux() -> None:
+    """Fail clearly on non-Linux hosts instead of via a confusing missing-binary error."""
+    if not sys.platform.startswith("linux"):
+        raise PermissionDenied(
+            f"user provisioning is Linux-only; this host is {sys.platform}. "
+            "The unprivileged task commands (count, cubes, details, archive) still work."
+        )
+
+
+def user_exists(username: str) -> bool:
+    """True when the account already exists on this host.
+
+    Uses the `pwd` database directly rather than shelling out to `id` — no subprocess, no
+    parsing, and it works identically whether or not elevation is available. This is the
+    idempotency probe: it must be callable in USER mode, where `useradd` is not.
     """
-    if not _USERNAME_RE.match(username):
-        raise ValueError(f"invalid username: {username!r}")
-    return username
+    try:
+        # POSIX-only; imported lazily so this module stays importable on Windows.
+        import pwd
+    except ImportError:  # non-POSIX
+        return False
+    try:
+        pwd.getpwnam(username)  # type: ignore[attr-defined]
+    except KeyError:
+        return False
+    return True
 
 
-def add_user(username: str, *, sudo_group: bool = False, use_sudo: bool = True) -> None:
-    """Create a system user, optionally adding it to the ``sudo`` group.
-
-    Linux only. The username is validated first, then every command is invoked with an
-    argument list (never a shell string).
+def add_user(
+    username: str,
+    *,
+    mode: PrivMode,
+    sudo_group: bool = False,
+    timeout: float = DEFAULT_TIMEOUT,
+    dry_run: bool = False,
+) -> UserResult:
+    """Create a system user, optionally adding it to the ``sudo`` group. Idempotent.
 
     Args:
-        username:   The login name to create; validated against the allow-list.
-        sudo_group: When True, also add the new user to the ``sudo`` group.
-        use_sudo:   Prefix commands with ``sudo``; set False if already running as root.
+        username:   The login name to create; validated against the allow-list first.
+        mode:       Privilege mode resolved for this endpoint (ROOT / SUDO / USER).
+        sudo_group: When True, also add the user to the ``sudo`` group.
+        timeout:    Per-command timeout in seconds.
+        dry_run:    Resolve and validate everything, execute nothing.
+
+    Raises:
+        ValidationError:  username failed the allow-list.
+        PermissionDenied: not Linux, or no elevation route on this endpoint.
+        AlreadyDone:      the account already exists (Exit.NOOP — a success outcome).
     """
     # Trust boundary: reject malicious / malformed input before touching the system.
     validate_username(username)
-    prefix = ["sudo"] if use_sudo else []
+    _require_linux()
 
-    # Create the account. List args => the username is a single literal argv entry.
-    _require("useradd")
-    subprocess.run([*prefix, "useradd", username], check=True)
+    if not mode.is_privileged:
+        raise PermissionDenied(
+            f"creating user {username!r} requires elevation, but this endpoint has no "
+            "elevation route (not root, and passwordless sudo is not configured). "
+            "Run `ossys check` for details."
+        )
 
-    # Optional, opt-in privilege escalation: add the user to the `sudo` group.
+    if user_exists(username):
+        raise AlreadyDone(f"user {username!r} already exists; nothing to do")
+
+    # OSSYS-SEC-007: resolve every tool this operation will need *before* the first
+    # mutating call, so the operation is all-or-nothing.
+    needed = ("useradd", "usermod") if sudo_group else ("useradd",)
+    tools = require_tools(*needed)
+
+    run(
+        ["useradd", username],
+        mode=mode,
+        timeout=timeout,
+        resolved=tools["useradd"],
+        dry_run=dry_run,
+    )
+
     if sudo_group:
-        _require("usermod")
-        subprocess.run([*prefix, "usermod", "-aG", "sudo", username], check=True)
+        run(
+            ["usermod", "-aG", "sudo", username],
+            mode=mode,
+            timeout=timeout,
+            resolved=tools["usermod"],
+            dry_run=dry_run,
+        )
+
+    return UserResult(
+        username=username,
+        created=True,
+        sudo_group=sudo_group,
+        already_existed=False,
+        dry_run=dry_run,
+    )
