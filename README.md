@@ -90,14 +90,110 @@ Bash wrapper (forwards args to the CLI):
 
 ---
 
+---
+
+## 🤖 Automate it · Two paths, one build
+
+ossys runs unattended on either a privileged or an unprivileged endpoint, from the same
+install. It detects which it is on, and `ossys check` tells you before anything is scheduled.
+
+| | **Privileged** | **Unprivileged** |
+|---|---|---|
+| Privilege | root (euid 0), or passwordless `sudo -n` | never elevates |
+| Scheduler | `ossys-system.timer` · `/etc/cron.d/ossys` | `systemctl --user` timer · user crontab |
+| Config | `/etc/ossys/ossys.toml` | `~/.config/ossys/ossys.toml` |
+| `useradd` etc. | runs | refuses cleanly, exit `20` |
+| Install | `sudo ./deploy/install-endpoint.sh --path system` | `./deploy/install-endpoint.sh --path user` |
+
+```bash
+./deploy/install-endpoint.sh --path auto     # picks the path, installs, verifies, then arms
+```
+
+The installer will not enable a timer until `ossys check` passes on that host.
+
+### The checkup
+
+```bash
+ossys check              # human table; exit 0 fit, 60 unfit
+ossys check --json       # structured, for fleet collection
+ossys check --strict     # warnings are failures — the deployment gate
+```
+
+Verifies the privilege path, required binaries, config discovery, and that every configured
+output root exists and is writable. Read-only — safe to schedule anywhere.
+
+### Exit codes
+
+Scripts branch on the number, never on parsed text.
+
+| Code | Meaning |
+|-----:|---------|
+| `0` | success |
+| `10` | validation error — bad input |
+| `20` | permission — no elevation route on this endpoint |
+| `30` | external command failed or timed out |
+| `40` | **no-op** — already in the desired state (a *success* outcome) |
+| `50` | config missing/malformed/unknown profile |
+| `60` | preflight failed — host unfit |
+
+`0` and `40` both mean "fine". Both systemd units set `SuccessExitStatus=40`.
+
+### Per-endpoint config
+
+One `ossys.toml` can serve a whole fleet — profiles select themselves by hostname glob.
+
+```toml
+[defaults]
+mode = "auto"              # auto | root | sudo | user
+allowed_roots = ["."]      # where --out may write. This is a security boundary.
+timeout = 30
+
+[profile.server]
+hosts = ["srv-*", "*.prod.internal"]
+mode = "sudo"
+allowed_roots = ["/var/lib/ossys"]
+json = true
+
+[profile.workstation]
+hosts = ["dev-*", "*-laptop"]
+mode = "user"
+allowed_roots = ["~/ossys"]
+```
+
+Start from [`deploy/ossys.toml.example`](deploy/ossys.toml.example).
+
+> **Breaking change:** `--out` is now contained to `allowed_roots` (default: the working
+> directory). `ossys details -o /etc/foo` exits `10` instead of writing. See `DECISIONS.md`
+> D-005.
+
+### Machine-readable output
+
+```bash
+ossys --json archive a.log -o backup.tgz | jq -r .path
+ossys --dry-run useradd alice --sudo        # validate and resolve, change nothing
+```
+
+`--json` puts a single JSON document on stdout and nothing else — diagnostics go to stderr,
+on both the success and failure paths.
+
+---
+
 ## 🧱 Layout
 
 | Module | Responsibility |
 |--------|----------------|
+| `validate.py` | the trust boundary — usernames, output paths, bounds, archive members |
+| `exits.py` | exit-code taxonomy + error hierarchy |
+| `privilege.py` | root/sudo/user detection; shell-free, bounded command execution |
+| `config.py` | TOML per-endpoint config and profile selection |
+| `preflight.py` | the `ossys check` endpoint checkup |
+| `output.py` | JSON / human emitter (all output goes through here) |
 | `tasks.py` | pure logic: `count_to`, `roll_cubes`, `save_details`, `archive_files` |
-| `system.py` | privileged ops via `subprocess` list-args + username validation |
-| `cli.py` | non-interactive Typer entrypoint |
+| `system.py` | privileged ops via the privilege layer + username validation |
+| `cli.py` | non-interactive Typer entrypoint and the single exception boundary |
+| `scripts/ossys-run.sh` | scheduled-run wrapper — gates on `ossys check`, passes exit codes through |
 | `scripts/menu.sh` | thin bash wrapper (replaces the old interactive menu) |
+| `deploy/` | systemd units, cron files, config example, endpoint installer |
 
 ---
 
@@ -117,6 +213,28 @@ CI runs lint + format + mypy + tests + `shellcheck` on the wrapper on every push
 User input never reaches a shell. `add_user` validates the username against a strict
 pattern and passes argument **lists** to `subprocess`, so `"bob; rm -rf /"` is rejected,
 not executed.
+
+Beyond that, from the audit in [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md) (18 findings —
+2 HIGH, 7 MED, 8 LOW, 1 INFO):
+
+- **Output paths are contained.** `--out` is resolved, refused if it or its parent is a
+  symlink, and must land inside `allowed_roots`. Previously any path was writable, and
+  `write_text` followed symlinks — under `sudo` that was an arbitrary root-owned file write.
+- **Writes are atomic.** Temp file in the destination directory, `os.replace` on success. A
+  failed archive no longer leaves a truncated `.tgz` that looks like a good one.
+- **Binaries are pinned.** Tools are resolved with `shutil.which` and the *resolved absolute
+  path* is executed, so a mutable `PATH` cannot swap the binary between check and exec.
+- **Nothing can hang.** Every subprocess call has a `timeout`, closed stdin, and `sudo -n`
+  — a stalled credential fails fast instead of blocking a cron job forever.
+- **Minimal child environment.** `PATH`/`LANG`/`LC_ALL`/`TZ` only. No `LD_PRELOAD`, no `IFS`.
+- **All-or-nothing.** Every binary an operation needs is resolved before the first mutating
+  call, so a partly-provisioned host cannot leave half-created state behind.
+- **No archive surprises.** Members must be regular files (directories are not silently
+  recursed into) and basename collisions are rejected rather than losing a file at restore.
+- **Clean failures.** No tracebacks leaking absolute paths into CI logs or cron mail.
+
+Enforced on every commit by ruff's `S` (flake8-bandit) ruleset, mypy `--strict`, and an
+80% coverage gate.
 
 ---
 
