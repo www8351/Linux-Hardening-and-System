@@ -17,8 +17,10 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      # --frozen enforces uv.lock. Without it CI could silently resolve different versions
+      # than the lockfile pins, which makes the lockfile decorative (OSSYS-SEC-016).
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --frozen --all-extras --dev
 
       - name: Ruff lint
         run: uv run ruff check .
@@ -26,13 +28,40 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
 
-      - name: Mypy
-        run: uv run mypy src
+      # No path argument: use the `files` setting in pyproject.toml so CI checks exactly what
+      # a developer checks locally. Previously CI ran `mypy src` while the config said
+      # ["src", "tests"], so tests were type-checked locally but not in CI.
+      - name: Mypy (strict)
+        run: uv run python -m mypy
 
-      - name: Tests
-        run: uv run pytest -q
+      - name: Tests + coverage gate
+        run: uv run python -m pytest -q --cov=ossys --cov-report=term-missing --cov-fail-under=80
 
-      - name: Shellcheck the wrapper
+      # Verifies the package installs standalone and the entrypoint resolves. `python -m`
+      # is used for the smoke test because it does not depend on the console script shim.
+      - name: Build and install check
+        run: |
+          uv build
+          uv run --isolated --with dist/*.whl python -m ossys version
+
+      - name: Shellcheck the wrappers
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
-          shellcheck scripts/menu.sh
+          shellcheck scripts/menu.sh scripts/ossys-run.sh deploy/install-endpoint.sh
+
+      # The checkup must pass on a stock GitHub runner. This is the same command the
+      # deployment gate runs on a real endpoint, so a regression in preflight logic breaks
+      # CI rather than surfacing at 03:00 on a production host.
+      - name: Endpoint checkup
+        run: uv run python -m ossys --json check
+
+  # Supply-chain audit is a separate job so a new CVE advisory does not block an unrelated
+  # code change from being merged, while still being visible on every run.
+  audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Audit dependencies
+        run: uvx pip-audit --strict
