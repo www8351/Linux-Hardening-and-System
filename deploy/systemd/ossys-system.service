@@ -1,0 +1,69 @@
+# PRIVILEGED automation path — runs as root, no sudo involved.
+#
+# Install:
+#   sudo install -m 0644 deploy/systemd/ossys-system.service /etc/systemd/system/
+#   sudo install -m 0644 deploy/systemd/ossys-system.timer   /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now ossys-system.timer
+#
+# Config comes from /etc/ossys/ossys.toml (the privileged discovery path).
+#
+# Verify before arming:  sudo /opt/ossys/bin/python -m ossys check --strict
+
+[Unit]
+Description=ossys scheduled system task (privileged)
+Documentation=https://github.com/www8351/Linux-Hardening-and-System
+# The checkup is a hard gate: if the endpoint is not fit to run, do not run.
+Wants=ossys-check.service
+After=ossys-check.service network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+
+# python -m rather than the console script: no PATH dependency, no shim, and immune to the
+# uv trampoline issue (SECURITY_AUDIT.md §5). Adjust the interpreter path to your install.
+ExecStart=/opt/ossys/bin/python -m ossys --profile server --json check --strict
+ExecStart=/opt/ossys/bin/python -m ossys --profile server --json archive /var/log/syslog -o /var/lib/ossys/syslog.tgz
+
+# Exit code 40 is NOOP — the requested state already held. That is a success for a
+# scheduler, so do not let systemd mark the unit failed on a genuinely idempotent run.
+SuccessExitStatus=40
+
+# --- Hardening -------------------------------------------------------------------------
+# This unit runs as root, so the sandbox is doing real work. ProtectSystem=strict makes the
+# entire filesystem read-only except ReadWritePaths, which means a path-traversal bug in
+# ossys cannot write outside /var/lib/ossys even if the in-process containment check were
+# bypassed. Defence in depth for OSSYS-SEC-001/-002.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE
+ReadWritePaths=/var/lib/ossys
+
+# ossys is non-interactive by contract; closing stdin enforces it at the unit level too.
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
+# Belt-and-braces against a hung external command. ossys already bounds each subprocess
+# with its own timeout; this bounds the whole run.
+TimeoutStartSec=300
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,83 @@
+# ossys endpoint configuration — example
+#
+# Install location decides which automation path picks it up:
+#
+#   /etc/ossys/ossys.toml              → the PRIVILEGED path (root systemd timer / root cron)
+#   ~/.config/ossys/ossys.toml         → the UNPRIVILEGED path (systemctl --user / user cron)
+#
+# Both can coexist on one endpoint. The same command line resolves to different policy
+# depending on who runs it, which is the point — the timer does not need to know.
+#
+# Discovery order (first hit wins):
+#   1. --config PATH   2. $OSSYS_CONFIG   3. ./ossys.toml
+#   4. ~/.config/ossys/ossys.toml        5. /etc/ossys/ossys.toml
+
+[defaults]
+# auto | root | sudo | user
+#   auto  — detect: euid 0 → root; else probe `sudo -n true`; else user
+#   root  — assert we are euid 0, fail loudly if not
+#   sudo  — assert passwordless sudo works, fail loudly if not
+#   user  — never attempt elevation; privileged commands exit 20
+#
+# Forcing a mode is preferred for scheduled jobs: it turns "silently degraded to
+# unprivileged and did nothing" into a loud, diagnosable failure.
+mode = "auto"
+
+# Directories output files may be written into. This is the containment list that closes
+# OSSYS-SEC-001/-002 (arbitrary file write via --out). Keep it as narrow as the workload
+# allows; "." means the working directory only.
+allowed_roots = ["."]
+
+# Seconds before an external command is killed. Bounds every subprocess call so a stalled
+# sudo cannot hang a timer indefinitely (OSSYS-SEC-006).
+timeout = 30
+
+# Emit JSON on stdout by default. Recommended for anything scheduled — the log becomes
+# structured and greppable by field instead of by regex.
+json = false
+
+# Global dry-run. Useful for staging a new profile across a fleet before arming it.
+dry_run = false
+
+# Extra binaries `ossys check` must find on this endpoint, beyond the built-in set.
+require_tools = []
+
+[defaults.webhook]
+# Optional failure notification. Empty URL disables it entirely — no network traffic and no
+# DNS lookup happen when this is unset.
+url = ""
+on_failure = true
+
+
+# ---------------------------------------------------------------------------------------
+# Profiles overlay [defaults]. Select with --profile NAME, $OSSYS_PROFILE, or automatically
+# by hostname glob — which is what makes one file deployable unchanged across a fleet.
+# ---------------------------------------------------------------------------------------
+
+[profile.workstation]
+# The unprivileged path: developer laptops and desktops. No elevation, ever.
+hosts = ["dev-*", "*-laptop", "ws-*"]
+mode = "user"
+allowed_roots = ["~/ossys"]
+json = false
+
+[profile.server]
+# The privileged path: managed servers running the root system timer.
+hosts = ["srv-*", "app-*", "*.prod.internal"]
+mode = "sudo"
+allowed_roots = ["/var/lib/ossys", "/tmp/ossys"]
+timeout = 60
+json = true
+require_tools = ["useradd", "usermod", "tar"]
+
+[profile.container]
+# Minimal images already run as root, so sudo is absent and irrelevant.
+hosts = ["*-ci", "runner-*"]
+mode = "root"
+allowed_roots = ["/var/lib/ossys"]
+json = true
+
+[profile.default]
+# Fallback when no hostname glob matches and no --profile was given.
+mode = "user"
+allowed_roots = ["."]

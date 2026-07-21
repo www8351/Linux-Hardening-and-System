@@ -1,0 +1,37 @@
+# PRIVILEGED automation path via cron — the alternative to ossys-system.timer for hosts
+# without systemd (containers, Alpine, older distros).
+#
+# Install:
+#   sudo install -m 0644 deploy/cron/ossys-root.cron /etc/cron.d/ossys
+#
+# /etc/cron.d entries take a user field (the 6th column) — do NOT paste this into a user
+# crontab, where the field would be parsed as the start of the command.
+
+# Cron gives you a nearly empty environment and /usr/bin:/bin as PATH. Set it explicitly
+# rather than discovering the hard way that sbin is missing at 03:00.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Mail failures to a real address, or set MAILTO="" to discard. Cron mails on ANY output,
+# so ossys-run.sh keeps its diagnostics on stderr and stays quiet on success paths that
+# have nothing to report.
+MAILTO=root
+
+OSSYS_PROFILE=server
+OSSYS_JSON=1
+OSSYS_STRICT=1
+
+# m   h  dom mon dow  user  command
+#
+# The wrapper runs `ossys check` first and aborts the run if the endpoint is unfit.
+#
+# 03:17 rather than 03:00: an off-the-hour minute avoids colliding with every other cron
+# job on the box and with the rest of the fleet.
+17 3 * * *   root   /usr/local/lib/ossys/ossys-run.sh archive /var/log/syslog -o /var/lib/ossys/syslog.tgz
+
+# Standalone hourly checkup. Cheap, read-only, and gives a fleet monitor something to
+# scrape — an endpoint that stops reporting a healthy checkup is a signal in itself.
+7 * * * *    root   /usr/local/lib/ossys/ossys-run.sh --version >/dev/null
+
+# Exit code 40 (NOOP) is a SUCCESS. If you wrap these in a monitoring shim, treat 0 and 40
+# alike; only 10/20/30/50/60 are real failures.

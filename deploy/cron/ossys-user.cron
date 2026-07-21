@@ -1,0 +1,31 @@
+# UNPRIVILEGED automation path via cron. No root required at any point.
+#
+# Install:
+#   crontab -l > /tmp/ct 2>/dev/null; cat deploy/cron/ossys-user.cron >> /tmp/ct; crontab /tmp/ct
+#
+# Or review and paste into `crontab -e`.
+#
+# NOTE: a user crontab has NO user field. These lines are five time fields then the command.
+# Do not copy them into /etc/cron.d, where the first word of the command would be eaten as
+# the user field.
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Discard mail; the journal/log file is the record. Set an address if you want failures
+# delivered.
+MAILTO=""
+
+OSSYS_PROFILE=workstation
+# Pinned rather than auto-detected: if this account is later granted a passwordless sudo
+# rule, auto-detection would silently promote these runs to the privileged path. The
+# privilege level should change only when someone edits this file.
+OSSYS_MODE=user
+
+# m  h  dom mon dow  command
+#
+# Hourly at :23. The wrapper gates on `ossys check` and passes ossys' exit code through.
+23 * * * *  "$HOME/.local/lib/ossys/ossys-run.sh" archive "$HOME/.bashrc" -o "$HOME/ossys/dotfiles.tgz"
+
+# Daily checkup, appended to a log the operator actually reads.
+41 9 * * *  "$HOME/.local/lib/ossys/ossys-run.sh" --json check >> "$HOME/ossys/check.log" 2>&1

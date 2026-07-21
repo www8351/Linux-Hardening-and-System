@@ -1,0 +1,23 @@
+# Timer for the UNPRIVILEGED path. Pairs with ossys-user.service.
+#
+#   systemctl --user enable --now ossys-user.timer
+#   systemctl --user list-timers ossys-user.timer
+
+[Unit]
+Description=Run ossys user task hourly (unprivileged)
+Documentation=https://github.com/www8351/Linux-Hardening-and-System
+
+[Timer]
+OnCalendar=hourly
+
+# Smaller jitter than the system timer: hourly runs need to stay inside their hour.
+RandomizedDelaySec=300
+
+# Catch up after a suspend/resume cycle rather than skipping — the common case on the
+# workstations this path targets.
+Persistent=true
+
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

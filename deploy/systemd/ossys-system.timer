@@ -1,0 +1,26 @@
+# Timer for the PRIVILEGED path. Pairs with ossys-system.service.
+#
+#   sudo systemctl enable --now ossys-system.timer
+#   systemctl list-timers ossys-system.timer
+
+[Unit]
+Description=Run ossys system task daily (privileged)
+Documentation=https://github.com/www8351/Linux-Hardening-and-System
+
+[Timer]
+OnCalendar=daily
+
+# Spread the fleet's runs over an hour. Without this, every endpoint fires at exactly
+# 00:00:00 and stampedes whatever they share — a log server, a package mirror, a webhook.
+RandomizedDelaySec=3600
+
+# Run on boot if the machine was off at the scheduled time, rather than silently skipping
+# a day. Laptops and intermittently-powered endpoints need this; always-on servers do not
+# care either way.
+Persistent=true
+
+# Do not start a second run while the previous one is still going.
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

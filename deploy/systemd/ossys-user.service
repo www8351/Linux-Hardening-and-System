@@ -1,0 +1,49 @@
+# UNPRIVILEGED automation path — runs as the invoking user, never elevates.
+#
+# Install (no root required at any point):
+#   mkdir -p ~/.config/systemd/user
+#   install -m 0644 deploy/systemd/ossys-user.service ~/.config/systemd/user/
+#   install -m 0644 deploy/systemd/ossys-user.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ossys-user.timer
+#
+# For a user whose timers must run without an active login session:
+#   sudo loginctl enable-linger "$USER"
+#
+# Config comes from ~/.config/ossys/ossys.toml (the unprivileged discovery path).
+
+[Unit]
+Description=ossys scheduled user task (unprivileged)
+Documentation=https://github.com/www8351/Linux-Hardening-and-System
+
+[Service]
+Type=oneshot
+
+# --mode user is explicit rather than left to auto-detection. If this account later gains a
+# passwordless sudo rule, auto-detection would silently start running privileged and the
+# unit's behaviour would change without the unit file changing. Pinning the mode makes the
+# privilege level a property of the unit, which is what an auditor expects.
+ExecStart=%h/.local/share/ossys/venv/bin/python -m ossys --profile workstation --mode user --json check
+ExecStart=%h/.local/share/ossys/venv/bin/python -m ossys --profile workstation --mode user --json archive %h/.bashrc -o %h/ossys/dotfiles.tgz
+
+# 40 = NOOP: nothing to do. A success for scheduling purposes.
+SuccessExitStatus=40
+
+# --- Hardening -------------------------------------------------------------------------
+# A user unit cannot use ProtectSystem=strict meaningfully, but these still apply and cost
+# nothing.
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
+TimeoutStartSec=300
+Restart=no
+
+[Install]
+WantedBy=default.target
