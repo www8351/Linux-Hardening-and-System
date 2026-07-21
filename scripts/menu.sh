@@ -28,11 +28,25 @@ else
 	OSSYS=(ossys)
 fi
 
-echo "Examples:"
-echo "  $0 count 200"
-echo "  $0 cubes 7 --seed 42"
-echo "  $0 details --name Refael --age 30 --phone 555"
-echo
+# OSSYS-SEC-015: this banner used to go to stdout, ahead of the command's real output, so
+# `count=$(./scripts/menu.sh count 200)` got the help text glued to its data and
+# `menu.sh --json ... | jq` was unparseable. It now goes to stderr, and only when no
+# arguments were given — stdout carries nothing but the CLI's own output.
+if [[ $# -eq 0 ]]; then
+	{
+		echo "Usage: $0 <command> [args...]"
+		echo
+		echo "Examples:"
+		echo "  $0 count 200"
+		echo "  $0 cubes 7 --seed 42"
+		echo "  $0 details --name Refael --age 30 --phone 555"
+		echo "  $0 check --json"
+		echo
+		echo "For scheduled runs with a preflight gate, use scripts/ossys-run.sh instead."
+	} >&2
+	exec "${OSSYS[@]}" --help
+fi
 
-# Forward all arguments straight to the CLI.
+# Forward all arguments straight to the CLI. exec replaces this shell, so the CLI's exit
+# code (see ossys.exits) reaches the caller unmodified.
 exec "${OSSYS[@]}" "$@"
