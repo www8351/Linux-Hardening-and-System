@@ -11,3 +11,11 @@ dist/
 # Environments
 .venv/
 .env
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# ossys endpoint config (may hold host-specific policy)
+ossys.toml
