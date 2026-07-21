@@ -56,7 +56,7 @@ with `subprocess` list-args and strict input validation, so user input **never r
 ## 💡 Why
 
 The originals (`all_in_one.py`, `menu_python.py`, `Bash Call Pyhton/pro_*.py`) built shell
-commands from user input with `os.system(...format())` — a textbook injection hole and ran as
+commands from user input with `os.system(...format())` a textbook injection hole and ran as
 blocking `input()` menus.
 
 | Before ❌ | After ✅ |
