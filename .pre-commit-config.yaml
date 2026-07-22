@@ -1,11 +1,58 @@
+# Local gates. These must be at least as strict as CI — a pre-commit hook weaker than the
+# remote check is the wrong way round: it lets work look clean locally and fail on push.
+#
+# Install once:  uv run pre-commit install
+# Run manually:  uv run pre-commit run --all-files
+#
+# Revisions track the versions resolved in uv.lock. When you bump a dev dependency there,
+# bump it here too, or the two gates drift apart again (SECURITY_AUDIT.md OSSYS-SEC-018).
+
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.15.14
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
+    rev: v2.1.0
     hooks:
       - id: mypy
+        # OSSYS-SEC-018: without these the hook runs in an isolated env that cannot see
+        # typer or pytest, so it silently type-checks against Any and passes code that CI
+        # then rejects. tomli is needed for the 3.10 branch of the tomllib import.
+        additional_dependencies:
+          - typer>=0.12
+          - pytest>=8.3
+          - tomli>=2.0.1
+        # Match CI exactly: no path argument, so the files= setting in pyproject.toml
+        # decides the scope (src and tests), and pass_filenames must be off for that to
+        # take effect.
+        args: []
+        pass_filenames: false
+
+  # shellcheck-py, not koalaman/shellcheck-precommit: the latter runs shellcheck inside a
+  # container, so every commit would require a running Docker daemon. A local gate that
+  # depends on Docker Desktop being up is a gate developers disable. This one ships the
+  # binary as a wheel and needs nothing.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        # The wrappers and the installer carry real logic — privilege detection, the
+        # preflight gate, exit-code passthrough — and CI shellchecks them, so local should
+        # too.
+        files: ^(scripts/.*\.sh|deploy/.*\.sh)$
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      # A private key committed to a hardening project would be a bad look, and this is
+      # nearly free.
+      - id: detect-private-key
