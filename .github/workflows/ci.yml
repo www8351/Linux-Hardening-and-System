@@ -162,6 +162,10 @@ jobs:
           # Idempotency against real system state rather than a stubbed pwd lookup: the
           # second run must be exit 40 (NOOP), not an error. --entrypoint is required because
           # the image's ENTRYPOINT is `ossys` itself.
+          #
+          # Running these by hand from Git Bash on Windows needs MSYS_NO_PATHCONV=1, or the
+          # shell rewrites /bin/sh into a host path before docker sees it. Not an issue on
+          # the Linux runners this job targets.
           docker run --rm --user root --entrypoint /bin/sh ossys:ci -c '
             set -u
             ossys --mode root useradd alice >/dev/null

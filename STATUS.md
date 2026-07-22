@@ -47,6 +47,11 @@ exit-code taxonomy.
 - [x] **Phase 6 (stretch)** — MCP tool server (`ossys-mcp`), read-only by default, two-switch
       privileged gate, no command-runner tool, honest annotations, verified with a real stdio
       protocol handshake against the live server process
+- [x] **Container image built and verified** (2026-07-22, 47 MB): non-root default, exit
+      taxonomy across the container boundary, `useradd` executed for real as root, idempotent
+      re-run returning 40 against genuine `/etc/passwd` state, `--sudo` group membership,
+      mounted-config discovery, no build toolchain or leftover wheel — and OSSYS-SEC-001's
+      exact exploit (root writing `/etc/cron.d`) refused with exit 10
 
 ## Findings status
 
@@ -71,8 +76,7 @@ exit-code taxonomy.
 
 - [ ] **GitHub Actions has never run on this repo** — see below. Blocks verification of the
       container image, the plugin contract, the coverage gate and the MCP contract step.
-- [ ] **Docker image is unbuilt** — no local daemon; CI is its only verification and CI does
-      not run.
+- [x] ~~Docker image unbuilt~~ — **built and fully verified locally on 2026-07-22.**
 - [ ] **OSSYS-SEC-017 (zip-slip)** — open by design until an extraction command exists.
 
 ## Next best action
@@ -116,15 +120,10 @@ Nothing blocking. Two decisions were taken unilaterally and should be confirmed:
 - `examples/ossys-plugin-demo/pyproject.toml` declares `ossys` as a dependency for realism.
   There may be an unrelated `ossys` on PyPI — installs use `--no-deps` for that reason, in CI
   and in the README.
-- **The Docker image has never been built.** The daemon is not running on this machine. What
-  *was* verified locally is the builder stage's logic: the exact COPY set and the same
-  `python -m build --wheel --no-isolation` invocation, run against a clean directory,
-  producing a correct wheel with `py.typed` and the console-script entry point. The 15 shell
-  blocks in the workflow are `bash -n` clean. Everything else about the image — base image,
-  apt layer, non-root user, ENTRYPOINT — is unproven until the CI Docker job runs.
 - The Docker CI job runs `useradd` **for real** as root inside a throwaway container. That is
-  deliberate (it is the only non-mocked exercise of the privileged path) but it is worth a
-  second pair of eyes on the isolation assumption before it is trusted.
+  deliberate — it is the only non-mocked exercise of the privileged path — and it has now been
+  run locally with the expected results, but the isolation assumption is still worth a second
+  pair of eyes before anyone extends the pattern.
 - `Dockerfile` pins the base image by tag, not digest. For a production image, pin by digest
   so a rebuild cannot silently pick up a new base; noted inline.
 - **The MCP server is the sharpest surface here and deserves review before it is enabled

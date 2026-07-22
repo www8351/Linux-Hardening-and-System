@@ -345,3 +345,57 @@ is unresolved and sits outside the repository.
 Nothing planned. All six phases are complete. The open items are the CI mystery, the unbuilt
 container image, and OSSYS-SEC-017 (zip-slip), which stays open by design until an extraction
 command exists.
+
+---
+
+## 2026-07-22 (later) — Container image built and verified
+
+**Worked on:** Building the image, which the previous entry recorded as committed-but-unbuilt.
+
+**Process note first:** the daemon was down, I flagged that in `STATUS.md` and carried on. The
+right move was to stop and ask — the user had Docker Desktop available the whole time and
+starting it took one message. Flagging a gap in a file is not the same as surfacing it. When
+verification is blocked by something the user can unblock in seconds, ask.
+
+### What was verified
+
+Image builds clean (47 MB). Every assertion the CI Docker job makes, run for real:
+
+| | |
+|---|---|
+| default user | `ossys`, non-root |
+| checkup as non-root | reports the unprivileged path |
+| `--mode user useradd` | exit 20, refused cleanly |
+| `count 3` / `count 0` | exit 0 / exit 10 — taxonomy crosses the container boundary |
+| `--user root useradd alice` | **exit 0, account genuinely created** |
+| re-run | **exit 40 (NOOP) against real `/etc/passwd`** |
+| `useradd bob --sudo` | bob really in the `sudo` group |
+| build toolchain / leftover wheel | absent |
+| `useradd` + `usermod` | present at `/usr/sbin/` |
+| mounted `/etc/ossys/ossys.toml` | discovered with no flags; `container` profile applied |
+
+### What this proves that nothing else did
+
+- **The privileged path executes.** Every unit test of `add_user` mocks `subprocess` by
+  design. Until now, "argv is constructed correctly" was verified but "`useradd` accepts that
+  argv" was not. It does.
+- **Idempotency works against real system state**, not a stubbed `pwd` lookup. The second run
+  returned 40 because the account actually existed.
+- **OSSYS-SEC-001 is demonstrably closed.** The audit's headline exploit — a root process
+  writing to `/etc/cron.d` via `--out` — was attempted against the real image and refused
+  with exit 10, while a write inside `allowed_roots` succeeded. That is the HIGH finding
+  closed by demonstration rather than by unit test.
+- **The uid choice was right.** The image's `ossys` account is 10001; the container-created
+  `alice` landed on 10002. The comment claiming they cannot collide is now evidence-backed.
+
+### What did not work
+
+- **Git Bash mangled `/bin/sh` into `C:/Program Files/Git/usr/bin/sh`** when passed to
+  `docker run --entrypoint`. MSYS path conversion, Windows-local only — the CI job targets
+  Linux runners and is unaffected. Worked around with `MSYS_NO_PATHCONV=1` and noted inline in
+  the workflow, since anyone reproducing these commands by hand on Windows will hit it.
+
+### Still open
+
+GitHub Actions has still never produced a run, so the workflow itself remains unexercised —
+but the Docker job's *content* is now known-good, which was the larger risk.
