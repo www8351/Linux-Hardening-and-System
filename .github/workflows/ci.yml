@@ -84,6 +84,66 @@ jobs:
           printf '[defaults.plugins]\nallowlist = ["nothing"]\n' > /tmp/blocked.toml
           test "$(rc uv run python -m ossys --config /tmp/blocked.toml demo hello ci)" = "2"
 
+  # The container is a disposable sandbox, which makes it the only place the privileged code
+  # path can be exercised for real rather than against mocks. `useradd` genuinely runs here
+  # and genuinely mutates /etc/passwd — inside a throwaway container, so nothing is at risk.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t ossys:ci .
+
+      - name: Unprivileged path (image default)
+        run: |
+          set -euo pipefail
+          # Capture an exit code without -e aborting the step.
+          rc() { local c=0; docker run --rm ossys:ci "$@" >/dev/null 2>&1 || c=$?; echo "$c"; }
+
+          # The image must not run as root by default.
+          test "$(docker run --rm --entrypoint id ossys:ci -un)" = "ossys"
+
+          # ...so the checkup reports the unprivileged path.
+          docker run --rm ossys:ci --json check | grep -q '"detail": "user'
+
+          # A privileged command refuses cleanly here rather than failing halfway: exit 20.
+          test "$(rc --mode user useradd alice)" = "20"
+
+          # The exit taxonomy survives the container boundary.
+          test "$(rc count 3)" = "0"
+          test "$(rc count 0)" = "10"
+
+      - name: Privileged path, executed for real inside the sandbox
+        run: |
+          set -euo pipefail
+
+          # Root in a disposable container, genuinely creating a user and genuinely mutating
+          # /etc/passwd. This is the code path every unit test mocks, run for real.
+          docker run --rm --user root ossys:ci --mode root --json useradd alice \
+            | grep -q '"created": true'
+
+          # Idempotency against real system state rather than a stubbed pwd lookup: the
+          # second run must be exit 40 (NOOP), not an error. --entrypoint is required because
+          # the image's ENTRYPOINT is `ossys` itself.
+          docker run --rm --user root --entrypoint /bin/sh ossys:ci -c '
+            set -u
+            ossys --mode root useradd alice >/dev/null
+            ossys --mode root useradd alice >/dev/null; rc=$?
+            test "$rc" -eq 40 || { echo "expected exit 40 on re-run, got $rc"; exit 1; }
+            id alice >/dev/null || { echo "user was not actually created"; exit 1; }
+          '
+
+      - name: Image hygiene
+        run: |
+          set -euo pipefail
+          # No build toolchain left in the final image.
+          ! docker run --rm --user root --entrypoint /bin/sh ossys:ci -c 'command -v gcc'
+          # No pip cache or wheel left behind.
+          ! docker run --rm --user root --entrypoint /bin/sh ossys:ci -c 'ls /tmp/*.whl'
+          # The tools the privileged path needs are present, as `ossys check` also asserts.
+          docker run --rm --user root --entrypoint /bin/sh ossys:ci -c 'command -v useradd usermod'
+
   # Supply-chain audit is a separate job so a new CVE advisory does not block an unrelated
   # code change from being merged, while still being visible on every run.
   audit:

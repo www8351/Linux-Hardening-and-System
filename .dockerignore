@@ -1,0 +1,45 @@
+# Keep the build context small and free of anything that should not reach an image layer.
+# Note that COPY --from=builder means most of this never lands in the final image anyway,
+# but a smaller context is a faster build and a smaller blast radius if a COPY ever widens.
+
+# Version control and CI
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Virtualenvs and tool caches — .venv in particular is large and holds host-specific paths
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+
+# Build artefacts
+build/
+dist/
+*.egg-info/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# Working notes — not needed to build, and no reason to put them in a layer
+STATUS.md
+PROGRESS.md
+DECISIONS.md
+CLAUDE.md
+CLAUDE_MEMORY.md
+
+# Endpoint config may carry host-specific policy; it belongs mounted at runtime, not baked
+# into the image where it cannot be changed without a rebuild.
+ossys.toml
+
+# Local editor/OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
