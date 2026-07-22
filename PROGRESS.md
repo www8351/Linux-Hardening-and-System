@@ -193,3 +193,82 @@ extraction code, so the pre-emptive `safe_extract()` remains deferred by design)
 ### Next
 
 Phase 5: verify `pipx install .` on a clean machine, and the optional Dockerfile.
+
+---
+
+## 2026-07-22 — Phase 5: packaging, container sandbox, gate parity
+
+**Worked on:** Phase 5 (testing & packaging), plus closing the last open audit finding.
+
+### What changed
+
+`src/ossys/py.typed`; full distribution metadata and explicit hatch build targets in
+`pyproject.toml`; `tests/test_packaging.py`; `Dockerfile` and `.dockerignore`; a `docker` CI
+job; a rewritten `.pre-commit-config.yaml`.
+
+Tests 172 → 181 passed, 1 skipped. Coverage steady at 87%.
+
+### What worked
+
+- **`pipx install .` finally verified rather than assumed.** Built both artefacts, installed
+  the wheel into a clean venv at a *space-free* path, and confirmed the console script
+  resolves and propagates the taxonomy (0 success, 10 validation, 2 usage). This retires a
+  claim carried as "unverified" for three sessions. The old `uv trampoline failed to
+  canonicalize script path` was purely the spaces in this checkout's path — not a packaging
+  defect. The shim was always fine.
+- **`py.typed` turned out to be the substantive part of Phase 5.** The package is checked
+  under `mypy --strict`, but without the PEP 561 marker none of that reached consumers: a
+  plugin author importing `ossys.validate` got bare `Any`. That matters more here than in a
+  typical library, because Phase 4 actively instructs plugin authors to import those modules
+  rather than reimplement the checks — so the missing marker was quietly undermining the
+  plugin contract.
+- **Explicit sdist include list.** Ships src, tests, deploy, examples, scripts, README,
+  LICENSE and SECURITY_AUDIT.md; excludes the working notes. Someone auditing the tarball
+  should see what the code does and how it is verified — the tests carry the security
+  contract, so they belong — not a session-by-session progress log.
+- **Putting the privileged path in CI, for real.** The Docker job runs `useradd` as root
+  inside a throwaway container and then re-runs it to prove exit 40 against genuine system
+  state rather than a stubbed pwd lookup. Every unit test of that path mocks `subprocess` by
+  design; this is the one place the real thing executes, and the container is what makes
+  that safe.
+- **Simulating the Dockerfile builder stage locally.** Could not build the image, but copying
+  the exact COPY set into a clean directory and running the same
+  `python -m build --wheel --no-isolation` proved the COPY list sufficient and the wheel
+  correct. Partial verification beats none.
+
+### What did not work / what surprised
+
+- **`[project.urls]` silently swallowed `dependencies`.** Inserting the table immediately
+  after `requires-python` put the following `dependencies = [...]` array *inside* it. The
+  build failed with `URL 'dependencies' of field 'project.urls' must be a string` — a good
+  error, but only because hatchling type-checks URLs. TOML table ordering is positional;
+  headers must go after the key-values they are not meant to capture.
+- **`python -m build` re-downloads the backend by default.** The Dockerfile installed
+  `hatchling` and then ignored it, because `build` creates an isolated env unless told not
+  to. Added `--no-isolation`: one fewer network fetch per image build, and the backend
+  version is the one actually pinned.
+- **The first shellcheck pre-commit hook required a Docker daemon.**
+  `koalaman/shellcheck-precommit` runs shellcheck in a container, so `pre-commit run` failed
+  outright on this machine (Docker installed, not started). Switched to `shellcheck-py`,
+  which ships the binary as a wheel. A local gate that depends on Docker Desktop being up is
+  a gate developers disable — worth remembering for any future hook choice.
+- **The pre-commit revs had drifted badly**: pinned at ruff 0.6.9 / mypy 1.11.2 against
+  0.15.14 / 2.1.0 actually installed. Combined with the missing `additional_dependencies`
+  (OSSYS-SEC-018), the local gate was weaker than CI in three separate ways.
+- **Could not build the container image.** Docker CLI present, daemon down. The image is
+  committed unbuilt and flagged as such in `STATUS.md`; the CI Docker job is its first real
+  verification.
+- **Bash heredocs bit me a second time this project** — after the backtick incident in a
+  commit message, an inline heredoc carrying prose with quotes failed to parse. Long prose
+  now goes through written files, never inline shell.
+
+### Findings status
+
+17 of 18 findings closed. OSSYS-SEC-018 fixed this session. Only OSSYS-SEC-017 (zip-slip)
+remains open by design — no extraction code exists, and `safe_extract()` is the gate on any
+future `ossys unarchive`.
+
+### Next
+
+Phase 6 (stretch): MCP tool server wrapper. Before that, confirm the CI Docker job is green —
+the image has no other verification.

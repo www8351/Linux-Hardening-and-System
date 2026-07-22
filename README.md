@@ -70,6 +70,29 @@ Bash can still drive it see [`scripts/menu.sh`](scripts/menu.sh) but the logic l
 
 ---
 
+## 📦 Install
+
+```bash
+pipx install .                 # isolated, puts `ossys` on PATH
+# or
+pip install .
+```
+
+Ships a `py.typed` marker, so plugin authors importing `ossys.validate` / `ossys.privilege`
+get real types rather than `Any`.
+
+Sandboxed, for the destructive commands:
+
+```bash
+docker build -t ossys:local .
+docker run --rm ossys:local check                       # unprivileged (image default)
+docker run --rm --user root ossys:local --mode root useradd alice
+```
+
+The image does **not** default to root — the privileged path is one explicit flag.
+
+---
+
 ## 📦 Use
 
 ```bash
@@ -257,19 +280,29 @@ plugin runs with full process privilege.
 | `scripts/menu.sh` | thin bash wrapper (replaces the old interactive menu) |
 | `deploy/` | systemd units, cron files, config example, endpoint installer |
 | `examples/ossys-plugin-demo/` | working plugin template |
+| `Dockerfile` | non-root-by-default sandbox for the destructive commands |
 
 ---
 
 ## 🧪 Develop
 
 ```bash
+uv run pre-commit install      # one-off: local gates match CI exactly
+
 uv run ruff check .
 uv run ruff format .
-uv run mypy src
-uv run pytest
+uv run python -m mypy          # no path arg — scope comes from pyproject.toml
+uv run python -m pytest --cov=ossys --cov-fail-under=80
 ```
 
-CI runs lint + format + mypy + tests + `shellcheck` on the wrapper on every push.
+CI runs lint, format, mypy `--strict`, tests with an 80% coverage gate, `shellcheck`,
+a wheel build + install smoke test, `ossys check`, the plugin integration contract, a
+`pip-audit` job, and a Docker job that builds the image and runs the **privileged path for
+real** inside a throwaway container — the one place `useradd` actually executes rather than
+being mocked.
+
+> On Windows checkouts whose path contains spaces, `uv run <tool>` fails with
+> `uv trampoline failed to canonicalize script path`. Use `uv run python -m <tool>`.
 
 ## 🔐 Security
 

@@ -2,8 +2,8 @@
 
 **Last updated:** 2026-07-21
 **Branch:** `main` · **Baseline before this session:** `15d27d8`
-**Tests:** `172 passed, 1 skipped` · **Coverage:** 87% (gate: ≥80%) · **mypy strict:** clean · **ruff (incl. `S`):** clean
-**Current phase:** Phases 1–4 complete. Phase 5 (packaging/Docker) and 6 (MCP) open.
+**Tests:** `181 passed, 1 skipped` · **Coverage:** 87% (gate: ≥80%) · **mypy strict:** clean · **ruff (incl. `S`):** clean · **pre-commit:** 10/10 hooks pass
+**Current phase:** Phases 1–5 complete. Only Phase 6 (MCP, stretch) remains.
 
 ---
 
@@ -38,6 +38,12 @@ exit-code taxonomy.
       kill switch, shadow refusal, failure isolation, `ossys plugins` inventory
 - [x] `examples/ossys-plugin-demo/` — working plugin template; CI asserts the full contract
       (mount, invoke, exit 40 propagation, validator reuse, allow-list unmount)
+- [x] **Phase 5** — `py.typed` marker, full distribution metadata, explicit hatch build
+      targets, `tests/test_packaging.py`, Dockerfile + `.dockerignore`, Docker CI job
+- [x] **`pipx install .` verified** — wheel built, installed into a clean space-free venv,
+      console script resolves and propagates the exit taxonomy (0 / 10 / 2)
+- [x] **OSSYS-SEC-018 closed** — pre-commit now matches CI (mypy deps, pinned revs,
+      shellcheck, hygiene hooks)
 
 ## Findings status
 
@@ -56,19 +62,22 @@ exit-code taxonomy.
 | OSSYS-SEC-015 (menu.sh stdout) | Fixed — banner to stderr, only when argv is empty |
 | OSSYS-SEC-016 (CI gaps) | Fixed — `--frozen`, coverage gate, `S` rules, `pip-audit` job |
 | OSSYS-SEC-017 (zip-slip, INFO) | **Still open by design** — no extraction exists; `safe_extract()` required before any lands |
-| OSSYS-SEC-018 (pre-commit mypy) | **Open** — hook still lacks `additional_dependencies` |
+| OSSYS-SEC-018 (pre-commit mypy) | Fixed — deps added, revs pinned to `uv.lock`, shellcheck added |
 
 ## Open
 
-- [ ] **OSSYS-SEC-018** — add `additional_dependencies: [typer, pytest]` to the pre-commit mypy hook and pin revs to `uv.lock`
-- [ ] **Phase 5** — verify `pipx install .`; optional Dockerfile for sandboxed destructive commands
-- [ ] **Phase 6** — MCP tool server wrapper
+- [ ] **Phase 6 (stretch)** — wrap ossys as an MCP tool server so Claude Code / Desktop can
+      call operations as tool calls instead of shelling out
+- [ ] **Docker image is unbuilt locally** — see "Needs review"
 
 ## Next best action
 
-Phase 5. `pipx install .` has not been exercised — the entrypoint changed to `ossys.cli:main`
-and the console-script path is still unverified on a clean machine (CI now builds a wheel and
-smoke-tests `python -m ossys`, which deliberately bypasses the shim).
+Push, and read the CI result — the Docker job is the only verification the image has ever
+had. If it is green, Phase 5 is genuinely done and Phase 6 is the remaining work.
+
+All 18 findings from `SECURITY_AUDIT.md` are now closed except OSSYS-SEC-017 (zip-slip),
+which stays open by design: no extraction code exists, and `safe_extract()` is the gate on
+any future `ossys unarchive`.
 
 ## Blockers / waiting on
 
@@ -98,6 +107,17 @@ Nothing blocking. Two decisions were taken unilaterally and should be confirmed:
 - `examples/ossys-plugin-demo/pyproject.toml` declares `ossys` as a dependency for realism.
   There may be an unrelated `ossys` on PyPI — installs use `--no-deps` for that reason, in CI
   and in the README.
+- **The Docker image has never been built.** The daemon is not running on this machine. What
+  *was* verified locally is the builder stage's logic: the exact COPY set and the same
+  `python -m build --wheel --no-isolation` invocation, run against a clean directory,
+  producing a correct wheel with `py.typed` and the console-script entry point. The 15 shell
+  blocks in the workflow are `bash -n` clean. Everything else about the image — base image,
+  apt layer, non-root user, ENTRYPOINT — is unproven until the CI Docker job runs.
+- The Docker CI job runs `useradd` **for real** as root inside a throwaway container. That is
+  deliberate (it is the only non-mocked exercise of the privileged path) but it is worth a
+  second pair of eyes on the isolation assumption before it is trusted.
+- `Dockerfile` pins the base image by tag, not digest. For a production image, pin by digest
+  so a rebuild cannot silently pick up a new base; noted inline.
 
 ## Known environment issue
 

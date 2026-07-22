@@ -445,3 +445,99 @@ exit 50.
 **Rejected:** registering at module import (no access to `--config`), and registering
 everything then filtering at invocation time (the blocked package would already have been
 imported, defeating the control).
+
+---
+
+## D-025 — Ship `py.typed`
+
+**Date:** 2026-07-22 · **Status:** Final
+
+**Why:** the package is checked under `mypy --strict`, but without the PEP 561 marker that
+guarantee stopped at the package boundary — consumers saw `Any`. This matters more here than
+for a typical library because Phase 4 tells plugin authors to import `ossys.validate` and
+`ossys.privilege` rather than reimplement the checks. Shipping typed-but-unmarked was quietly
+undermining the plugin contract.
+
+---
+
+## D-026 — sdist ships the tests, not the working notes
+
+**Date:** 2026-07-22 · **Status:** Final
+
+`[tool.hatch.build.targets.sdist]` includes `src`, `tests`, `deploy`, `examples`, `scripts`,
+`README.md`, `LICENSE` and `SECURITY_AUDIT.md`. It excludes `STATUS.md`, `PROGRESS.md`,
+`DECISIONS.md` and `CLAUDE_MEMORY.md`.
+
+**Why include the tests:** they *are* the security contract — `test_system.py` asserts on
+exact argv, `test_tasks.py` asserts the symlink refusals. Someone auditing the tarball should
+see not just what the code does but how that is verified, and be able to re-run it.
+
+**Why include SECURITY_AUDIT.md:** a consumer evaluating a hardening tool should be able to
+read what was found and what was fixed without cloning the repo.
+
+**Why exclude the rest:** session-by-session working notes have no value to a consumer, and
+they date rapidly once frozen inside an immutable artefact.
+
+---
+
+## D-027 — The container image does not run as root by default
+
+**Date:** 2026-07-22 · **Status:** Final
+
+`USER ossys` (uid 10001). The privileged path is `docker run --user root`.
+
+**Why:** consistent with every other privilege decision here — sudo-group membership is
+opt-in, elevation is detected rather than assumed. A root-by-default image is a loaded gun
+the moment somebody adds `-v /:/host`; opting in is one flag, while opting out after an
+incident is not. uid 10001 sits outside the range Debian's adduser allocates, so an
+in-container `ossys useradd` cannot collide with the image's own account.
+
+**Rejected:** defaulting to root because "the container is the sandbox anyway". True for the
+intended use, but the image will also be used in ways nobody predicted, and the default is
+what those uses inherit.
+
+**Also rejected:** a HEALTHCHECK. ossys is one-shot, not a service — there is no process to
+probe, and a healthcheck on a container that exits immediately is noise. The equivalent
+signal is `check --strict`, which exits 60 when the host is unfit.
+
+---
+
+## D-028 — CI executes the privileged path for real, inside a container
+
+**Date:** 2026-07-22 · **Status:** Final
+
+The Docker job runs `ossys useradd` as root in a throwaway container, actually mutating
+`/etc/passwd`, then re-runs it to assert exit 40 and confirms the account with `id`.
+
+**Why:** every unit test of that path mocks `subprocess` — deliberately, so no real user is
+ever created on a developer's machine. That leaves the actual behaviour untested: argv
+construction is verified, but not that `useradd` accepts it, nor that the pwd-based
+idempotency probe agrees with real system state. The container makes running it for real
+safe, which is the whole reason the Dockerfile exists.
+
+**Constraint:** this must stay confined to the container job. The temptation to "just run it
+in the main test job" would create real accounts on CI runners and, worse, normalise the
+pattern for anyone running the suite locally.
+
+---
+
+## D-029 — Local gates must be at least as strict as CI
+
+**Date:** 2026-07-22 · **Status:** Final
+
+`.pre-commit-config.yaml` rewritten: mypy gains `additional_dependencies` and CI's exact
+invocation, revs are pinned to the versions in `uv.lock`, and shellcheck plus hygiene hooks
+are added.
+
+**Why:** a pre-commit hook weaker than the remote check is the wrong way round — work looks
+clean locally and fails on push, which trains people to skip the hook. OSSYS-SEC-018 was
+exactly this: the mypy hook ran without typer, checked against `Any`, and passed code CI
+rejected.
+
+**shellcheck source matters:** `shellcheck-py` (a wheel) rather than
+`koalaman/shellcheck-precommit` (a container). The container variant made `pre-commit run`
+fail outright on a machine with Docker installed but not started. A local gate that depends
+on Docker Desktop being up is a gate developers disable.
+
+**Standing rule:** when a dev dependency is bumped in `uv.lock`, bump the matching
+pre-commit rev. They had already drifted from 0.6.9/1.11.2 to 0.15.14/2.1.0.
