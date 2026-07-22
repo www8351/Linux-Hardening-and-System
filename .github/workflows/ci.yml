@@ -4,6 +4,10 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # Manual trigger. Added because this workflow had registered with GitHub as active but
+  # never produced a single run across many pushes; without a dispatch trigger there is no
+  # way to test that from the CLI or the UI, and "CI will verify it" stays an assumption.
+  workflow_dispatch:
 
 jobs:
   check:
