@@ -42,6 +42,32 @@ dry_run = false
 # Extra binaries `ossys check` must find on this endpoint, beyond the built-in set.
 require_tools = []
 
+[defaults.mcp]
+# The MCP tool server (`ossys-mcp`), which exposes ossys operations to a language model.
+# Only affects that binary -- the CLI is unaffected by everything in this table.
+#
+# READ THIS BEFORE WIDENING IT. An MCP server hands tool invocation to a model: whatever is
+# exposed can be called on the model's initiative, with arguments the model chose, in
+# response to text that may have come from anywhere -- a file it read, a log line, a web
+# page. Treat this list the way you would treat a sudoers entry.
+enabled = true
+
+# Tools exposed BEYOND the always-available read-only set (check, plugins, version, count,
+# cubes). Empty means read-only only, which is the default and the right answer for most
+# endpoints.
+#
+#   expose = ["archive"]            # lets a model write .tgz files inside allowed_roots
+#   expose = ["archive", "details"] # ...and write text files there
+expose = []
+
+# SECOND, independent switch required before `useradd` is exposed. Listing it in `expose` is
+# not enough on its own. Two opt-ins, because "let the model make backups" must never
+# silently also mean "let the model create root-capable users".
+#
+# If you set this true AND run ossys-mcp as root, a prompt-injected model can create system
+# accounts. No in-process validation prevents that; it is a deployment decision.
+allow_privileged = false
+
 [defaults.plugins]
 # Entry-point plugins (group "ossys.plugins") attach new admin domains as separate packages.
 # Discovery means IMPORTING third-party code -- in a root process on the privileged path.
@@ -49,7 +75,7 @@ enabled = true
 
 # Which plugins this host may load, by name. EMPTY MEANS ALLOW ALL: fine for a workstation,
 # wrong for a privileged fleet host, where any package installed into the venv could add
-# root-run subcommands. Pin it on servers -- see [profile.server.plugins] below.
+# root-run subcommands. Pin it on servers -- see the server profile below.
 #
 # `ossys plugins` lists what is installed and which distribution each came from.
 allowlist = []
@@ -103,6 +129,11 @@ allowed_roots = ["/var/lib/ossys", "/tmp/ossys"]
 timeout = 60
 json = true
 require_tools = ["useradd", "usermod", "tar"]
+
+[profile.server.mcp]
+# Servers expose no MCP surface at all: they are unattended, and nothing there should be
+# waiting on a language model to call it.
+enabled = false
 
 [profile.server.plugins]
 # Privileged endpoints pin the list. A package landing in the venv -- pulled in as a

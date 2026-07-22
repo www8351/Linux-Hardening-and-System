@@ -2,8 +2,8 @@
 
 **Last updated:** 2026-07-21
 **Branch:** `main` · **Baseline before this session:** `15d27d8`
-**Tests:** `181 passed, 1 skipped` · **Coverage:** 87% (gate: ≥80%) · **mypy strict:** clean · **ruff (incl. `S`):** clean · **pre-commit:** 10/10 hooks pass
-**Current phase:** Phases 1–5 complete. Only Phase 6 (MCP, stretch) remains.
+**Tests:** `205 passed, 1 skipped` · **Coverage:** 82% (gate: ≥80%) · **mypy strict:** clean · **ruff (incl. `S`):** clean · **pre-commit:** 10/10 hooks pass
+**Current phase:** **All six phases complete.**
 
 ---
 
@@ -44,6 +44,9 @@ exit-code taxonomy.
       console script resolves and propagates the exit taxonomy (0 / 10 / 2)
 - [x] **OSSYS-SEC-018 closed** — pre-commit now matches CI (mypy deps, pinned revs,
       shellcheck, hygiene hooks)
+- [x] **Phase 6 (stretch)** — MCP tool server (`ossys-mcp`), read-only by default, two-switch
+      privileged gate, no command-runner tool, honest annotations, verified with a real stdio
+      protocol handshake against the live server process
 
 ## Findings status
 
@@ -66,18 +69,24 @@ exit-code taxonomy.
 
 ## Open
 
-- [ ] **Phase 6 (stretch)** — wrap ossys as an MCP tool server so Claude Code / Desktop can
-      call operations as tool calls instead of shelling out
-- [ ] **Docker image is unbuilt locally** — see "Needs review"
+- [ ] **GitHub Actions has never run on this repo** — see below. Blocks verification of the
+      container image, the plugin contract, the coverage gate and the MCP contract step.
+- [ ] **Docker image is unbuilt** — no local daemon; CI is its only verification and CI does
+      not run.
+- [ ] **OSSYS-SEC-017 (zip-slip)** — open by design until an extraction command exists.
 
 ## Next best action
 
-Push, and read the CI result — the Docker job is the only verification the image has ever
-had. If it is green, Phase 5 is genuinely done and Phase 6 is the remaining work.
+**Work out why GitHub Actions never triggers.** Everything currently described as
+"CI-verified" is unverified. Facts gathered: the workflow is registered and reports `active`,
+the repo is public and not a fork, `actions/permissions` reports `enabled: true` with
+`allowed_actions: all`, `ci.yml` is on the default branch, and there are 8 `PushEvent`s in
+the repo's event history — with **zero workflow runs, ever**. A `workflow_dispatch` trigger
+has been added so a run can be started by hand from the Actions tab or
+`gh workflow run ci.yml`; try that first, since it will either produce a run or produce an
+error message explaining the refusal.
 
-All 18 findings from `SECURITY_AUDIT.md` are now closed except OSSYS-SEC-017 (zip-slip),
-which stays open by design: no extraction code exists, and `safe_extract()` is the gate on
-any future `ossys unarchive`.
+All 18 audit findings are closed except OSSYS-SEC-017.
 
 ## Blockers / waiting on
 
@@ -118,6 +127,13 @@ Nothing blocking. Two decisions were taken unilaterally and should be confirmed:
   second pair of eyes on the isolation assumption before it is trusted.
 - `Dockerfile` pins the base image by tag, not digest. For a production image, pin by digest
   so a rebuild cannot silently pick up a new base; noted inline.
+- **The MCP server is the sharpest surface here and deserves review before it is enabled
+  anywhere real.** Defaults are closed (read-only only) and `useradd` needs two independent
+  opt-ins, but the residual risk is genuine and un-fixable in-process: expose `useradd` and
+  run `ossys-mcp` as root, and a prompt-injected model can create system accounts. That is a
+  deployment decision, reported by `ossys check` and the startup banner but not prevented.
+- Coverage moved 87% → 82% with Phase 6. Still above the gate, but this is the first time it
+  has moved toward it — `mcp_server.main()`'s serving loop is not unit-testable.
 
 ## Known environment issue
 

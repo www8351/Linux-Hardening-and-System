@@ -107,6 +107,17 @@ class Settings:
     plugins_enabled: bool = True
     """Master switch for entry-point plugin discovery. False imports no third-party code."""
 
+    mcp_enabled: bool = True
+    """Master switch for the MCP tool server. Only affects `ossys-mcp`, never the CLI."""
+
+    mcp_expose: list[str] = field(default_factory=list)
+    """Tools exposed to a language model BEYOND the always-available read-only set. Empty
+    means read-only only. See ossys.mcp_server for why this is closed by default."""
+
+    mcp_allow_privileged: bool = False
+    """Second, independent opt-in required before `useradd` is exposed over MCP. Listing it
+    in mcp_expose is not sufficient on its own."""
+
     plugins_allowlist: list[str] = field(default_factory=list)
     """Plugin names this endpoint may load. Empty means allow all — fine for a workstation,
     wrong for a privileged fleet host, where plugins add root-run subcommands."""
@@ -219,6 +230,28 @@ def _coerce(settings: Settings, table: dict[str, Any], source: str) -> None:
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 raise ConfigError(f"{source}.{key} must be a list of strings")
             setattr(settings, attr, value)
+
+    mcp = table.get("mcp")
+    if mcp is not None:
+        if not isinstance(mcp, dict):
+            raise ConfigError(f"{source}.mcp must be a table")
+        unknown_mcp_keys = set(mcp) - {"enabled", "expose", "allow_privileged"}
+        if unknown_mcp_keys:
+            # Same reasoning as the webhook table: a misspelled key that silently does
+            # nothing is worse than an error, because the operator believes it took effect.
+            raise ConfigError(
+                f"{source}.mcp has unknown keys: {', '.join(sorted(unknown_mcp_keys))}"
+            )
+        for key, attr in (("enabled", "mcp_enabled"), ("allow_privileged", "mcp_allow_privileged")):
+            if key in mcp:
+                if not isinstance(mcp[key], bool):
+                    raise ConfigError(f"{source}.mcp.{key} must be bool")
+                setattr(settings, attr, mcp[key])
+        if "expose" in mcp:
+            value = mcp["expose"]
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                raise ConfigError(f"{source}.mcp.expose must be a list of strings")
+            settings.mcp_expose = value
 
     plugins = table.get("plugins")
     if plugins is not None:

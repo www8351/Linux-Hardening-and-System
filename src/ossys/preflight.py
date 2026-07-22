@@ -223,6 +223,35 @@ def check_plugins(records: list[PluginRecord] | None) -> list[Check]:
     return results
 
 
+def check_mcp(settings: Settings) -> Check:
+    """Report the MCP tool surface without starting a server.
+
+    An MCP server whose surface cannot be enumerated is one nobody can review, and this
+    surface is reachable by a language model. Exposing a writable tool is a warning rather
+    than a failure — it is a legitimate configuration — but it should never be invisible.
+    A privileged tool being live is reported explicitly, because that is the configuration
+    where a prompt-injected model could create system accounts.
+    """
+    from .mcp_server import exposure_report
+
+    report = exposure_report(settings)
+
+    if not report["enabled"]:
+        return _check("mcp", "ok", "disabled")
+    if report["unknown_in_expose"]:
+        return _check("mcp", "fail", f"unknown names in mcp.expose: {report['unknown_in_expose']}")
+    if report["privileged_tools"]:
+        return _check(
+            "mcp",
+            "warn",
+            f"PRIVILEGED tools exposed to a model: {report['privileged_tools']}; "
+            f"writable: {report['writable_tools']}",
+        )
+    if report["writable_tools"]:
+        return _check("mcp", "warn", f"writable tools exposed: {report['writable_tools']}")
+    return _check("mcp", "ok", f"read-only only ({len(report['tools'])} tools)")
+
+
 def check_non_interactive() -> Check:
     """Confirm ossys is not attached to a terminal it might be tempted to prompt on.
 
@@ -248,6 +277,7 @@ def run_checks(settings: Settings, plugin_records: list[PluginRecord] | None = N
     checks.extend(check_tools(settings, mode))
     checks.append(check_webhook(settings))
     checks.extend(check_plugins(plugin_records))
+    checks.append(check_mcp(settings))
     checks.append(check_non_interactive())
     return checks
 

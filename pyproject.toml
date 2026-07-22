@@ -34,11 +34,21 @@ dependencies = [
     "tomli>=2.0.1; python_version < '3.11'",
 ]
 
+[project.optional-dependencies]
+# The MCP tool server. Optional on purpose: it exposes ossys operations to a language
+# model, which is a materially different threat model from the CLI, and nobody should get
+# that surface by accident as a side effect of installing an admin tool.
+mcp = ["mcp>=1.2"]
+
 [project.scripts]
 # Points at main(), not app(): main() is the exception boundary that maps errors onto the
 # documented exit-code taxonomy (ossys.exits). Binding the Typer app directly would restore
 # tracebacks and undifferentiated exit code 1.
 ossys = "ossys.cli:main"
+# Separate binary rather than an `ossys mcp` subcommand: MCP clients are configured with a
+# command to spawn, and keeping it distinct means the server surface cannot be reached by
+# accident from an ordinary CLI invocation.
+ossys-mcp = "ossys.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/www8351/Linux-Hardening-and-System"
@@ -56,6 +66,8 @@ dev = [
     # The 3.10 install path uses the tomli backport; install it in dev so mypy
     # type-checks that branch at the declared python_version floor.
     "tomli>=2.0.1",
+    # Needed to test the MCP server; it stays an optional extra for consumers.
+    "mcp>=1.2",
 ]
 
 [build-system]

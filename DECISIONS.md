@@ -541,3 +541,115 @@ on Docker Desktop being up is a gate developers disable.
 
 **Standing rule:** when a dev dependency is bumped in `uv.lock`, bump the matching
 pre-commit rev. They had already drifted from 0.6.9/1.11.2 to 0.15.14/2.1.0.
+
+---
+
+## D-030 — The MCP surface is closed by default and widened only from config
+
+**Date:** 2026-07-22 · **Status:** Final
+
+Only read-only tools (`check`, `plugins`, `version`, `count`, `cubes`) are registered out of
+the box. Anything that writes or mutates requires a name in `[defaults.mcp] expose`. There is
+no CLI flag and no environment variable that can widen it.
+
+**Why config-only:** an MCP server hands tool invocation to a language model, with
+model-chosen arguments, in response to text that may have come from anywhere — a file it
+read, a log line, a fetched page. Widening that surface should be an act with an audit trail.
+A flag can be added by whatever launched the process; a file lives on the endpoint, is
+reviewable, version-controllable and diffable. Same reasoning as `allowed_roots` (D-005).
+
+**Rejected:** exposing everything and relying on the client's confirmation prompts. That
+outsources the security boundary to a UI the operator does not control, and to a human who
+will click through the twentieth prompt.
+
+---
+
+## D-031 — Privileged MCP tools require two independent opt-ins
+
+**Date:** 2026-07-22 · **Status:** Final
+
+`useradd` requires `allow_privileged = true` **in addition to** appearing in `expose`.
+Neither alone is sufficient.
+
+**Why:** the two decisions are genuinely different. "I want the model to be able to make
+backups" and "I want the model to be able to create root-capable users" should not share a
+switch — otherwise the first, made casually, silently grants the second. Two switches make
+the dangerous one impossible to enable by accident or by copy-paste of someone else's config.
+
+**Documented residual risk:** expose `useradd` and run `ossys-mcp` as root, and a
+prompt-injected model can create accounts. No in-process validation prevents that. It is a
+deployment decision, which is why it takes two switches and is reported by `ossys check`, by
+`exposure_report()` and by the server's startup banner. Stating it plainly beats implying a
+containment the design cannot deliver.
+
+---
+
+## D-032 — No generic command-runner tool, ever
+
+**Date:** 2026-07-22 · **Status:** Final
+
+There is deliberately no `run_command` / `exec` / `shell` MCP tool, and a test asserts none
+appears.
+
+**Why:** it is the single most tempting convenience and it would discard everything. Every
+control in `ossys.privilege` — argv lists, resolved absolute paths, timeouts, closed stdin,
+the minimal environment — exists because arbitrary command execution was the original defect.
+Re-adding it behind an MCP tool would rebuild the `os.system` hole with a language model
+holding the keyboard.
+
+**Rejected:** an allow-listed command runner. An allow-list of commands is not the same
+control as an allow-list of *operations with validated arguments*, and the distinction is
+exactly what `validate_username` provides.
+
+---
+
+## D-033 — MCP tool bodies are MCP-free and return envelopes rather than raising
+
+**Date:** 2026-07-22 · **Status:** Final
+
+Handlers are plain functions taking `Settings` and returning `dict`, with no MCP types.
+Failures come back as the same structured envelope the CLI emits under `--json`.
+
+**Why plain functions:** they are testable without the optional `mcp` dependency, and the
+registration layer stays a thin adapter instead of somewhere logic accumulates.
+
+**Why returned, not raised:** the model should receive `{"exit_code": 20, "error":
+"permission", ...}` — actionable, and identical to what a shell caller gets. An exception
+surfaces to the client as an opaque tool error and, worse, may carry a traceback disclosing
+host paths (the OSSYS-SEC-009 problem in a new place).
+
+---
+
+## D-034 — Tool annotations must be honest
+
+**Date:** 2026-07-22 · **Status:** Final
+
+`readOnlyHint` and `destructiveHint` are derived from the same table that decides exposure,
+and a test asserts destructive tools are never marked read-only.
+
+**Why:** clients use those hints to decide whether to warn or prompt. Marking a destructive
+tool read-only to avoid a confirmation dialog would be actively dishonest — it would defeat a
+protection the user believes is active. Keeping the annotations and the exposure gate driven
+by one table makes them impossible to drift apart.
+
+---
+
+## D-035 — `settings` must never appear in a generated tool schema
+
+**Date:** 2026-07-22 · **Status:** Final — regression-tested
+
+`_bind` computes an explicit trimmed `__signature__` and never sets `__wrapped__`.
+
+**Why:** this was a real defect, not a hypothetical. The first version used
+`functools.update_wrapper` on a `functools.partial` to carry the docstring across.
+`update_wrapper` sets `__wrapped__`, which makes `inspect.signature` follow through to the
+unbound function — so `settings` reappeared as a required argument in every tool schema,
+offering the model the object that carries `allowed_roots` and the privilege mode.
+
+Found by printing the generated schemas rather than trusting that `partial` would hide the
+parameter. Pinned by a test that iterates every registered tool and asserts `settings` is
+absent, plus a CI step that does the same.
+
+**Lesson recorded because it generalises:** `functools.partial` and
+`functools.update_wrapper` do not compose the way they appear to. Anything that generates a
+schema from a signature needs the schema asserted, not assumed.

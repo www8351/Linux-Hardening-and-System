@@ -53,6 +53,38 @@ jobs:
           sudo apt-get update && sudo apt-get install -y shellcheck
           shellcheck scripts/menu.sh scripts/ossys-run.sh deploy/install-endpoint.sh
 
+      # The MCP server is the sharpest surface in the project, so its wiring is verified
+      # end to end rather than only in-process: spawn the real server over stdio, complete
+      # the protocol handshake, list tools and call one.
+      - name: MCP server contract
+        run: |
+          set -euo pipefail
+
+          # Default surface must be read-only. A regression here would silently hand a
+          # language model the ability to write files or create users.
+          uv run python - <<'PY'
+          import asyncio, json
+          from ossys.config import Settings
+          from ossys.mcp_server import build_server, exposed_tools, READ_ONLY_TOOLS
+
+          assert {s.name for s in exposed_tools(Settings())} == set(READ_ONLY_TOOLS),               "default MCP surface is not read-only"
+
+          # Both opt-ins required before the privileged tool appears.
+          one = {s.name for s in exposed_tools(Settings(mcp_expose=["useradd"]))}
+          assert "useradd" not in one, "useradd exposed with only one opt-in"
+          both = {s.name for s in exposed_tools(
+              Settings(mcp_expose=["useradd"], mcp_allow_privileged=True))}
+          assert "useradd" in both
+
+          # `settings` carries allowed_roots and the privilege mode. It must never appear
+          # as a model-supplied argument.
+          tools = asyncio.run(build_server(Settings(mcp_expose=["archive"])).list_tools())
+          for tool in tools:
+              props = (tool.inputSchema or {}).get("properties", {})
+              assert "settings" not in props, f"{tool.name} leaks settings into its schema"
+          print(f"MCP contract OK: {len(tools)} tools, none leaking settings")
+          PY
+
       # The checkup must pass on a stock GitHub runner. This is the same command the
       # deployment gate runs on a real endpoint, so a regression in preflight logic breaks
       # CI rather than surfacing at 03:00 on a production host.

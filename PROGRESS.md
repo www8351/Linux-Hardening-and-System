@@ -272,3 +272,76 @@ future `ossys unarchive`.
 
 Phase 6 (stretch): MCP tool server wrapper. Before that, confirm the CI Docker job is green —
 the image has no other verification.
+
+---
+
+## 2026-07-22 (later) — Phase 6: MCP tool server
+
+**Worked on:** The stretch goal — wrapping ossys as an MCP server so Claude Code / Desktop
+can call operations as tool calls instead of shelling out.
+
+### What changed
+
+`src/ossys/mcp_server.py`, `tests/test_mcp_server.py` (24 tests), MCP config keys, an `mcp`
+check row in the preflight, an `mcp` optional extra plus the `ossys-mcp` console script, an
+MCP contract step in CI, and config/README documentation.
+
+Tests 181 → 205 passed, 1 skipped. Coverage 82% (down from 87%: the new module is large and
+its `main()` serving loop is not unit-testable, but still above the 80% gate).
+
+### What worked
+
+- **Treating this as the sharpest surface in the project and designing backwards from that.**
+  An MCP server hands tool invocation to a model, with model-chosen arguments, in response to
+  text that may have come from anywhere. So: read-only by default, writes need a config
+  entry, `useradd` needs a *second independent* switch, and none of it is reachable via a CLI
+  flag or environment variable — only a file that can be reviewed and diffed.
+- **Separating tool bodies from registration.** The handlers are plain functions returning
+  plain dicts with no MCP types in them, so they are testable without the optional dependency
+  and the registration layer stays a thin adapter rather than somewhere logic hides.
+- **Verifying with a real stdio handshake**, not just the in-process object graph: spawned
+  the actual server process, completed the protocol handshake, listed tools, called them.
+  That is the wiring an MCP client uses, and nothing else proves it.
+- **The gating is structural, not cosmetic.** An unexposed tool is not registered at all, so
+  `call_tool("ossys_useradd", ...)` fails with "Unknown tool". An advertised-but-refusing tool
+  would still tell the model the capability exists.
+
+### What did not work / what surprised
+
+- **A real security defect in the first version of `_bind`.** I used
+  `functools.update_wrapper` to carry the docstring across a `functools.partial`. That sets
+  `__wrapped__`, which makes `inspect.signature` follow through to the *unbound* function —
+  re-exposing `settings` as a required tool argument in every generated schema. `settings`
+  carries `allowed_roots` and the privilege mode. Caught by printing the schemas rather than
+  assuming, fixed by computing the trimmed signature explicitly and never setting
+  `__wrapped__`, and pinned by a regression test that asserts no tool schema contains it.
+  Worth remembering: `update_wrapper` and `partial` do not compose the way they look like
+  they do.
+- **A first-match string replace corrupted the example config.** My insertion anchor
+  `[profile.server.plugins]` matched inside a *comment* ("see [profile.server.plugins]
+  below") before the real table header, splicing a block mid-sentence and producing
+  `Cannot overwrite a value`. Caught because `ossys check` exited 50 against the example.
+  Fixed by anchoring on the exact line rather than a substring. Second time this session that
+  a naive replace has bitten; anchors need to be line-exact in files that quote their own
+  structure.
+- **Coverage dropped 87% → 82%.** Expected — `main()`'s serving loop and the SDK-import
+  failure path are not unit-testable — but it is the first time this project has moved
+  *toward* the gate rather than away from it.
+
+### CI has never run — worth stating plainly
+
+While checking the Docker job result from the previous session, found that this repository
+has produced **zero GitHub Actions runs in its entire history**, across every push. The
+workflow is registered and reported active, the repo is public, Actions are enabled, and
+`ci.yml` has been on the default branch throughout. No run has ever started.
+
+That means everything described as "CI verifies this" — the container image, the plugin
+integration contract, the coverage gate, the new MCP contract step — is unverified. Added a
+`workflow_dispatch` trigger so it can at least be started manually, but the underlying cause
+is unresolved and sits outside the repository.
+
+### Next
+
+Nothing planned. All six phases are complete. The open items are the CI mystery, the unbuilt
+container image, and OSSYS-SEC-017 (zip-slip), which stays open by design until an extraction
+command exists.

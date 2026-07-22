@@ -261,6 +261,62 @@ plugin runs with full process privilege.
 
 ---
 
+## 🧠 MCP tool server · call ossys from Claude
+
+```bash
+pip install "ossys[mcp]"
+```
+
+```json
+{"mcpServers": {"ossys": {"command": "ossys-mcp"}}}
+```
+
+Claude Code / Claude Desktop then call ossys operations as tools instead of shelling out and
+parsing text. Results come back as the same structured envelopes `--json` emits, exit codes
+included.
+
+**Read this before widening it.** An MCP server hands tool invocation to a model: whatever is
+exposed can be called on the model's initiative, with arguments the model chose, in response
+to text that may have come from anywhere — a file it read, a log line, a web page. Treat the
+list like a sudoers entry.
+
+Default surface — **read-only only**:
+
+| Tool | |
+|---|---|
+| `ossys_check` · `ossys_plugins` · `ossys_version` | inspect the endpoint |
+| `ossys_count` · `ossys_cubes` | pure computation |
+
+Nothing that writes a file or touches the system is exposed until a **config file** says so —
+no CLI flag, no environment variable, because policy should be reviewable and diffable:
+
+```toml
+[defaults.mcp]
+enabled = true
+expose = ["archive"]        # adds ossys_archive — writes, contained to allowed_roots
+allow_privileged = false    # SECOND switch, required before ossys_useradd appears
+```
+
+`useradd` needs **both** `expose` *and* `allow_privileged`. Two independent opt-ins, so
+"let the model make backups" never silently also means "let the model create root-capable
+users".
+
+- There is deliberately **no `run_command` tool**. That one convenience would discard every
+  control in `ossys.privilege` and rebuild the `os.system` hole this project exists to close.
+- Every tool goes through the **same validators as the CLI** — model-supplied paths are
+  contained by `allowed_roots` exactly like `--out`.
+- Errors are **returned, not raised**: the model sees `exit 20, no elevation route`, never a
+  traceback disclosing host paths.
+- Annotations (`readOnlyHint` / `destructiveHint`) are set **honestly**, so a client can warn
+  before a destructive call.
+- `ossys check` reports the live tool surface, and the server prints it to stderr on startup.
+
+> **Residual risk this does not remove:** expose `useradd` *and* run `ossys-mcp` as root, and
+> a prompt-injected model can create system accounts. No in-process validation fixes that —
+> it is a deployment decision, which is why it takes two switches and is reported everywhere.
+
+---
+
 ## 🧱 Layout
 
 | Module | Responsibility |
@@ -272,6 +328,7 @@ plugin runs with full process privilege.
 | `preflight.py` | the `ossys check` endpoint checkup |
 | `notify.py` | optional failure webhook (off by default, never alters the exit code) |
 | `plugins.py` | entry-point discovery, allow-list, and the plugin inventory |
+| `mcp_server.py` | MCP tool server — closed by default, two-switch privileged gate |
 | `output.py` | JSON / human emitter (all output goes through here) |
 | `tasks.py` | pure logic: `count_to`, `roll_cubes`, `save_details`, `archive_files` |
 | `system.py` | privileged ops via the privilege layer + username validation |
