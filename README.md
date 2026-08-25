@@ -361,6 +361,20 @@ being mocked.
 > On Windows checkouts whose path contains spaces, `uv run <tool>` fails with
 > `uv trampoline failed to canonicalize script path`. Use `uv run python -m <tool>`.
 
+## 📌 Project state
+
+All six phases are complete: the hardened core, the exit-code taxonomy, per-endpoint config and
+scheduling, the plugin system, the MCP tool server, and the container image. Last verified run:
+**206 tests (205 passed, 1 skipped)**, **82% coverage** against an 80% gate, `mypy --strict`
+clean, `ruff` (including the `S` ruleset) clean, and all 10 pre-commit hooks passing. The
+container image builds and the privileged path executes for real inside CI's throwaway
+container.
+
+Current state, the decision log, and a dated history live in [`STATUS.md`](STATUS.md),
+[`DECISIONS.md`](DECISIONS.md), and [`PROGRESS.md`](PROGRESS.md).
+
+---
+
 ## 🔐 Security
 
 User input never reaches a shell. `add_user` validates the username against a strict
