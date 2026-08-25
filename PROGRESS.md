@@ -4,6 +4,29 @@ Dated log of what happened, what changed, what worked, what did not.
 
 ---
 
+## 2026-08-25 — README accuracy audit; project-state block added
+
+**What was done**
+- Audited `README.md` against the repository rather than against memory, as part of a
+  portfolio-wide README correctness pass.
+- Added a **📌 Project state** section stating the verified figures — 206 tests
+  (205 passed, 1 skipped), 82% coverage against the 80% gate, mypy strict clean, ruff (incl. `S`)
+  clean, 10/10 pre-commit hooks — and pointing at `STATUS.md` / `DECISIONS.md` / `PROGRESS.md`,
+  which the README had never linked.
+
+**What was verified (and held up)**
+- `SECURITY_AUDIT.md` really does carry **18 findings — 2 HIGH, 7 MED, 8 LOW, 1 INFO**
+  (OSSYS-SEC-001..018), exactly as the README's Security section claims.
+- Every module named in the Layout table exists in `src/ossys/`, including `mcp_server.py`,
+  `plugins.py`, `notify.py` and `preflight.py`.
+- `deploy/` carries the systemd units, cron files, config example and endpoint installer as
+  described; `examples/ossys-plugin-demo/` exists.
+- Test collection reproduces 206 tests in this container (11 fail here only because the package
+  is not installed into the environment and the `mcp` extra is absent — not a code defect).
+
+**What did not change**
+- No source, test, or CI change. Documentation only.
+
 ## 2026-07-21 — Bootstrap + Phase 0 security audit
 
 **Worked on:** Lifecycle-file bootstrap and the Phase 0 audit gating the architecture and

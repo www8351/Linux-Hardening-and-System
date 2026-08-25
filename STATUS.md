@@ -1,9 +1,13 @@
 # STATUS.md — ossys
 
-**Last updated:** 2026-07-21
+**Last updated:** 2026-08-25
 **Branch:** `main` · **Baseline before this session:** `15d27d8`
 **Tests:** `205 passed, 1 skipped` · **Coverage:** 82% (gate: ≥80%) · **mypy strict:** clean · **ruff (incl. `S`):** clean · **pre-commit:** 10/10 hooks pass
 **Current phase:** **All six phases complete.**
+**2026-08-25:** README re-audited against the repo as part of a portfolio-wide accuracy pass. Its
+claims held up (the 18-finding audit breakdown, the module layout, the deploy tree); added a
+Project state section carrying the verified test/coverage/lint figures and linking the lifecycle
+files. Documentation only — no code change.
 
 ---
 
